@@ -1,0 +1,21 @@
+llama3-convert-notes-fxl.txt
+
+
+
+Moving model.embed_tokens.weight to embed_tokens.weight
+Missing keys: ['model.kv_cache_0', 'model.layers.0.self_attn.q_proj.weight', 'model.layers.0.self_attn.k_proj.weight', 'model.layers.0.self_attn.v_proj.weight', 'model.layers.0.self_attn.o_proj.weight', 'model.layers.0.self_attn.rotary_emb.inv_freq', 'model.layers.0.mlp.gate_proj.weight', 'model.layers.0.mlp.up_proj.weight', 'model.layers.0.mlp.down_proj.weight', 'model.layers.0.input_layernorm.weight', 'model.layers.0.post_attention_layernorm.weight', 'model.layers.1.self_attn.q_proj.weight', 'model.layers.1.self_attn.k_proj.weight', 'model.layers.1.self_attn.v_proj.weight', 'model.layers.1.self_attn.o_proj.weight', 'model.layers.1.self_attn.rotary_emb.inv_freq', 'model.layers.1.mlp.gate_proj.weight', 'model.layers.1.mlp.up_proj.weight', 'model.layers.1.mlp.down_proj.weight', 'model.layers.1.input_
+^^ what this means???
+
+from "load_pretrained_weights"
+
+
+Note: The following expected buffers were initialized:
+  - kv_cache_0
+  - layers.0.self_attn.rotary_emb.inv_freq
+  - layers.1.self_attn.rotary_emb.inv_freq
+  - layers.2.self_attn.rotary_emb.inv_freq
+  - layers.3.self_attn.rotary_emb.inv_freq
+
+
+add two diminions....
+Reshaped layers.0.mlp.down_proj.weight from torch.Size([4096, 14336]) to torch.Size([4096, 14336, 1, 1])

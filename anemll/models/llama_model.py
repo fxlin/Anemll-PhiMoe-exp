@@ -3,6 +3,12 @@
 #  Use of this source code is governed by a MIT license that can be
 #  found in the LICENSE.txt file or at https://opensource.org/license/mit
 
+# fxl, 4-17-25. basically construct the compute graph for llama model inference
+#       the key here is to partition the model (grou players, also do incremental prefill with kvcache...
+#       also, can map the op to ANE friendly ops (conv2d, ANE-softmax etc
+#       understdoo 2/5
+# does it cf here? https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+#    ^ ^ naming similar but much content diff
 from ..ane_converter.base_converter import BaseConverter
 import coremltools as ct
 import torch
@@ -36,7 +42,7 @@ STATE_LENGTH = 512   # KV cache state length
 
 # Cache configuration
 FORCE_UNIFIED_CACHE = True  # Force using a single unified KV cache
-ENABLE_UNIFIED_CACHE = True  # Enable unified KV cache by default
+ENABLE_UNIFIED_CACHE = True  # Enable unified KV cache by default       # fxl: means all transformer blocks share same kv cache (?) 
 
 # LM head configuration
 ENABLE_CONV2D = bool(1)      # Use Conv2d for LM head
@@ -62,7 +68,7 @@ class LlamaConfig:
         self.hidden_size = kwargs.get("hidden_size", 4096)
         self.initializer_range = kwargs.get("initializer_range", 0.02)
         self.intermediate_size = kwargs.get("intermediate_size", 14336)
-        self.max_position_embeddings = kwargs.get("max_position_embeddings", 8192)
+        self.max_position_embeddings = kwargs.get("max_position_embeddings", 8192)      # fxl: fo precomputed rope factors
         self.model_type = kwargs.get("model_type", "llama")
         self.num_attention_heads = kwargs.get("num_attention_heads", 32)
         self.num_hidden_layers = kwargs.get("num_hidden_layers", 32)
@@ -123,6 +129,7 @@ class LlamaRMSNorm(nn.Module):
         #hidden_states = hidden_states.view(hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[3])
         return hidden_states.to(MODEL_DTYPE)
         
+# fxl: not in use?        
 class NA_LayerNormANE(nn.Module):
     """ LayerNorm optimized for Apple Neural Engine (ANE) execution
     """
@@ -147,25 +154,33 @@ class NA_LayerNormANE(nn.Module):
         hidden_states = (self.weight * hidden_states).to(MODEL_DTYPE)
         return hidden_states
 
+# fxl 4/21/25 understood 3/5
+#       also, "inv_freq" is registerd and saved ni model. but will __init__ be excuted on coreml and produce cos_cached?
+#      for torhc.jit.trace, __init__() is not executed; only forward() is traced. 
 class LlamaRotaryEmbedding(nn.Module):
     """Rotary positional embeddings for LLaMA model."""
     
     def __init__(self, config):
         super().__init__()
         self.dim = config.hidden_size // config.num_attention_heads
-        self.max_position_embeddings = config.max_position_embeddings
+        self.max_position_embeddings = config.max_position_embeddings     # fxl: for precomputed rope factors? (although rope can handle unlimited seq len)
         self.base = config.rope_theta
         
         # Generate and cache the inverse frequency buffer
+        #  fxl: 'creates a vector of frequencies used to compute the angular rotation at each position'
+        #     NB this only cal for each "channel" (self.dim). 
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(TEST_DEVICE) / self.dim))
         self.register_buffer("inv_freq", inv_freq)
+        # fxl: 'register_buffer: This tensor is part of the model (like a parameter), but it’s not a learnable weight``
 
         # Cache cos and sin values for positions
-        t = torch.arange(self.max_position_embeddings, device=TEST_DEVICE).type_as(self.inv_freq)
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        t = torch.arange(self.max_position_embeddings, device=TEST_DEVICE).type_as(self.inv_freq) # fxl: a 1D tensor of token positions
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)  # fxl: For each position i and dimension j, compute product
         emb = torch.cat((freqs, freqs), dim=-1)
-        
-        # Shape: [1, max_pos, head_dim] - consistent for both single token and batched
+        # fxl: 'Each angle value is duplicated, because RoPE rotates each pair of adjacent dimensions, and we need one angle per pair — which affects two channels'
+        #      ^^ not sure if it is right. feels like dpulicate angles for "efficiency trick" below. XXX understand btr
+
+        # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc
         self.cos_cached = emb.cos().view(1, self.max_position_embeddings, self.dim)
         self.sin_cached = emb.sin().view(1, self.max_position_embeddings, self.dim)
         
@@ -181,9 +196,10 @@ class LlamaRotaryEmbedding(nn.Module):
             print(f"  sin_cached[0,0,:5]: {self.sin_cached[0,0,:5].tolist()}")
 
     def forward(self, x, seq_len=None):
-        # Simply return the pre-computed values, converting to the correct dtype
+        # Simply return the pre-computed values, converting to the correct dtype    fxl:??? b/c rope is not trainable?
         return self.cos_cached.to(dtype=x.dtype), self.sin_cached.to(dtype=x.dtype)
 
+    # fxl: uncelar where the input/outpu tensdor is (re)layouted in half-and-half layout
     def rotate(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """Apply rotary position embeddings to input tensor x."""
         # Ensure tensor is contiguous and get dimensions
@@ -212,12 +228,13 @@ class LlamaRotaryEmbedding(nn.Module):
                 print(f"      cos_sliced first 5 values: {cos.flatten()[:5].tolist()}")
                 print(f"      sin_sliced first 5 values: {sin.flatten()[:5].tolist()}")
 
-        # Apply rotation using complex number multiplication
+        # Apply rotation using complex number multiplication        # fxl: so coreml can even trace this??? does it have own impl???
         rotated = torch.cat([
-            x1 * cos - x2 * sin,  # Real part
-            x2 * cos + x1 * sin   # Imaginary part
+            x1 * cos - x2 * sin,  # Real part       # fxl: elem 0 in a pair
+            x2 * cos + x1 * sin   # Imaginary part  # fxl: elem 1 in a pair
         ], dim=-1)
-        
+        # fxl: NB: 'It’s only okay if the model expects the rotated values in this half-and-half layout'
+
         if ENABLE_DEBUG2:
             print(f"      rotated shape: {rotated.shape}")
             print(f"      rotated first 5 values: {rotated.flatten()[:5].tolist()}")
@@ -472,7 +489,7 @@ class LlamaAttention(nn.Module):
             if current_pos is not None:
                 # Update at current position
                 print(f"  Updating cache at position {current_pos}")
-                print(f"    Update slice - key_cache[:, {current_pos}:{current_pos + seq_length}]")
+                print(f"    Update slice - key_cache[:, {current_pos}:{current_pos + seq_length}]")     # fxl: this <--- a subseq
                 print(f"    key_states shape: {key_states.shape}")
                 print(f"    value_states shape: {value_states.shape}")
                 
@@ -824,6 +841,10 @@ class LlamaModel(BaseModel):
 
         return cos.to(MODEL_DTYPE), sin.to(MODEL_DTYPE)
 
+    # fxl: 4/17/25 the basic idea seems: npu cannot process a long seq. therefore, cut into small subseq. 
+    #   as such, prefill cannot be done in one shot, instead it must process each subseq. and "current_pos"
+    #   is the starting position of the subseq. there's a KVcache  maintained across subseqs. and attention is computed
+    #   and computed across the subseq    (understood 2/5
     def process_layer_prefill(self, layer_idx, hidden_states,  position_ids, causal_mask, current_pos, rotary_emb, layer_offset):
         """Process a single transformer layer in prefill mode"""
         layer = self.layers[layer_idx]
@@ -846,7 +867,7 @@ class LlamaModel(BaseModel):
             print(f"rotary_emb.shape={rotary_emb[0].shape}")
             print("[process_layer_prefill] causal_mask.shape=", causal_mask.shape)
 
-        # Get query, key and value states for prefill
+        # Get query, key and value states for prefill           fxl: this???
         query_states, key_states, value_states = layer.self_attn.get_new_kv_cache_prefill(
             normalized_states,
             current_pos,
@@ -892,7 +913,7 @@ class LlamaModel(BaseModel):
             post_attn = layer.post_attention_layernorm(hidden_states)
             hidden_states = hidden_states + layer.mlp(post_attn)
         else:
-            print("Skipping MLP for last layer in prefill mode")
+            print("Skipping MLP for last layer in prefill mode")    # fxl: this???
 
         if ENABLE_VALUES:
             print("BATCH------------------------------------------------------------------------------------------------- ")
@@ -1119,6 +1140,7 @@ def stable_l2_norm(x, eps):
     
     return x / scaled_norm, max_val
 
+# fxl: this wraps around LlamaModel and adds lm_head embed, etc. 
 class LlamaForCausalLM(nn.Module):
     """LLaMA model with causal language modeling head."""
     _tied_weights_keys = ["lm_head.weight"]
@@ -1130,7 +1152,7 @@ class LlamaForCausalLM(nn.Module):
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size).to(TEST_DEVICE)
         self.model = LlamaModel(config, use_ane_norm=use_ane_norm).to(TEST_DEVICE)
         
-        # Initialize lm_head as Conv2d for ANE optimization
+        # Initialize lm_head as Conv2d for ANE optimization  fxl: <--- this, interesting
         if ENABLE_CONV2D:
             if ENABLE_VACAB_SPLIT8:
                 self.lm_head8_1 = nn.Conv2d(config.hidden_size, config.vocab_size//8, 1, bias=False, dtype=MODEL_DTYPE).to(TEST_DEVICE)
@@ -1193,7 +1215,7 @@ class LlamaForCausalLM(nn.Module):
                     reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                     if ENABLE_VACAB_SPLIT8:
                         vocab_split = self.config.vocab_size // 8
-                        splits = torch.split(reshaped_weight, vocab_split)
+                        splits = torch.split(reshaped_weight, vocab_split)    # fxl: split a tensor into smaller parts
                         for i, split in enumerate(splits):
                             filtered_state_dict[f"lm_head8_{i+1}.weight"] = split
                             print(f"Split lm_head weight into lm_head8_{i+1}.weight with shape {split.shape}")
@@ -1208,6 +1230,7 @@ class LlamaForCausalLM(nn.Module):
                     filtered_state_dict["lm_head.weight"] = v
 
         # Load filtered weights
+        # fxl: "missing_keys is a list of str containing any keys that are expected"  https://pytorch.org/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.load_state_dict
         missing_keys, unexpected_keys = self.load_state_dict(filtered_state_dict, strict=False)
         if missing_keys:
             print(f"Missing keys: {missing_keys}")
@@ -1215,6 +1238,7 @@ class LlamaForCausalLM(nn.Module):
             print(f"Unexpected keys: {unexpected_keys}")
 
         # Load weights for the base model
+        #       fxl add dims, make weights 4D (but keep o_proj 2D)... for ANE optimization? (like it or coreml expects 4 dims?)
         base_filtered_dict = {}
         for k, v in file_dict.items():
             if k.startswith("model."):
@@ -1249,6 +1273,7 @@ class LlamaForCausalLM(nn.Module):
         actual_missing = [k for k in missing_keys if k not in expected_missing]
         if not actual_missing and not unexpected_keys:
             print("Pretrained weights loaded successfully")
+            # fxl: these tensors (?) are "expected", but not provided as part of models. so they were initialized as part of model construction
             if missing_keys:
                 print("Note: The following expected buffers were initialized:")
                 for k in missing_keys:

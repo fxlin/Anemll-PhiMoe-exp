@@ -280,10 +280,11 @@ else
     echo "Skipping step 5: Combining Models"
 fi
 
-# Step 6: Compile Models - Always run compilation for all parts that have LUT specified
+# Step 6: Compile Models - Always run compilation for all parts that have LUT specified  
+# fxl: NB to compile model for embedding, PF_FFN (merged)(ie transfomrers), and LM head
 run_step 6 "Compiling Models Part 1" "python \"$PROJECT_ROOT/anemll/utils/compile_models.py\" 1 ${LUT_PART1:+--lut $LUT_PART1} --prefix \"$PREFIX\" --input \"$OUTPUT_DIR\" --output \"$OUTPUT_DIR\""
 run_step 6 "Compiling Models Part 3" "python \"$PROJECT_ROOT/anemll/utils/compile_models.py\" 3 ${LUT_PART3:+--lut $LUT_PART3} --prefix \"$PREFIX\" --input \"$OUTPUT_DIR\" --output \"$OUTPUT_DIR\""
-if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "2" ]; then
+if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "2" ]; then    
     run_step 6 "Compiling Models Part 2" "python \"$PROJECT_ROOT/anemll/utils/compile_models.py\" 2 ${LUT_PART2:+--lut $LUT_PART2} --chunk $NUM_CHUNKS --prefix \"$PREFIX\" --input \"$OUTPUT_DIR\" --output \"$OUTPUT_DIR\""
 fi
 

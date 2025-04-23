@@ -1,0 +1,71 @@
+3b-conversion-err.txt
+
+
+
+Error during FFN conversion: "LayerNormKernelImpl" not implemented for 'Half'
+
+Error during conversion: "LayerNormKernelImpl" not implemented for 'Half'
+Traceback (most recent call last):
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/ane_converter/llama_converter.py", line 1038, in main
+    test_conversion(
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/ane_converter/llama_converter.py", line 895, in test_conversion
+    chunk_model = converter.convert_FFN(model, chunk_idx=i)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/ane_converter/llama_converter.py", line 667, in convert_FFN
+    traced_model = torch.jit.trace(
+                   ^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/jit/_trace.py", line 806, in trace
+    return trace_module(
+           ^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/jit/_trace.py", line 1074, in trace_module
+    module._c._create_method_from_trace(
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1511, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1520, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1501, in _slow_forward
+    result = self.forward(*input, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/ane_converter/llama_converter.py", line 637, in forward
+    return self.model.model(
+           ^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1511, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1520, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1501, in _slow_forward
+    result = self.forward(*input, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/llama_model.py", line 1029, in forward
+    hidden_states = self.process_layers(
+                    ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/llama_model.py", line 995, in process_layers
+    hidden_states = self.process_layer(
+                    ^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/llama_model.py", line 983, in process_layer
+    return self.process_layer_regular(layer_idx, hidden_states,  position_ids, causal_mask, current_pos, rotary_emb, layer_offset)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/llama_model.py", line 917, in process_layer_regular
+    normalized_states = layer.input_layernorm(hidden_states)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1511, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1520, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1501, in _slow_forward
+    result = self.forward(*input, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/llama_model.py", line 112, in forward
+    return F.layer_norm(hidden_states, self.weight.shape, self.weight, bias=None, eps=float(self.eps)).to(TEST_DEVICE).to(MODEL_DTYPE)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/torch/nn/functional.py", line 2546, in layer_norm
+    return torch.layer_norm(input, normalized_shape, weight, bias, eps, torch.backends.cudnn.enabled)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: "LayerNormKernelImpl" not implemented for 'Half'
+Error in step 3: Converting FFN

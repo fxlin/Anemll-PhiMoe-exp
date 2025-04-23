@@ -1,0 +1,86 @@
+python chat.py --meta ./meta.yaml
+
+Loaded parameters from ./meta.yaml:
+  Context Length: 512
+  Batch Size: 64
+  Num Chunks: 2
+  Models Directory: .
+  Embeddings: llama_embeddings
+  LM Head: llama_lm_head_lut4
+  FFN: llama_FFN_PF_lut4_chunk_01of02
+
+Using model directory: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1
+Context length: 512
+Using tokenizer path: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1
+
+Loading models...
+
+Loading embeddings model...
+Found model at: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1/llama_embeddings.mlmodelc
+Loading from: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1/llama_embeddings.mlmodelc
+Embeddings model loaded successfully
+
+Warning: No metadata found in model
+
+Using parameters:
+  Context Length: 512
+  State Length: 512
+  Prefill Batch Size: 64
+  LUT Bits: 4
+  Number of Chunks: 2
+
+Overriding batch size from args: 64
+
+Overriding num chunks from args: 2
+
+Loading LM head model...
+Found model at: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1/llama_lm_head_lut4.mlmodelc
+Loading from: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1/llama_lm_head_lut4.mlmodelc
+LM head model loaded successfully
+
+Loading FFN+PREFILL model(s)...
+Found model at: /Users/felixlin/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1/llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+
+Detected chunked FFN+PREFILL model (2 chunks)
+
+Loading FFN+PREFILL chunk: llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+Chunk loaded successfully
+
+Loading FFN+PREFILL chunk: llama_FFN_PF_lut4_chunk_02of02.mlmodelc
+Chunk loaded successfully
+
+Warning: No metadata found in model
+
+Using parameters:
+  Context Length: 512
+  State Length: 512
+  Prefill Batch Size: 64
+  LUT Bits: 4
+  Number of Chunks: 2
+
+Overriding batch size from args: 64
+
+Overriding num chunks from args: 2
+
+Metadata befor args.context_length: {'context_length': 512, 'state_length': 512, 'batch_size': 64, 'lut_bits': 4, 'num_chunks': 2}
+
+Overriding context length from command line: 512
+
+Metadata after load_models: {'context_length': 512, 'state_length': 512, 'batch_size': 64, 'lut_bits': 4, 'num_chunks': 2}
+
+Tokenizer Configuration:
+Tokenizer type: <class 'transformers.tokenization_utils_fast.PreTrainedTokenizerFast'>
+Tokenizer name: PreTrainedTokenizerFast
+Vocabulary size: 128256
+Model max length: 131072
+Set PAD token to EOS token
+
+Special Tokens:
+PAD token: '<|eot_id|>' (ID: 128009)
+EOS token: '<|eot_id|>' (ID: 128009)
+BOS token: '<|begin_of_text|>' (ID: 128000)
+UNK token: 'None' (ID: None)
+
+Created unified transformer state for 2 chunks
+
+Initialized causal mask for context length 512

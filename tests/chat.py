@@ -165,11 +165,14 @@ def find_all_chunks(base_path):
     pattern = re.sub(r'_chunk_\d+of\d+', '_chunk_*', str(path))
     return sorted(glob.glob(pattern))
 
+# fxl: here is how model is loaded  cf: https://apple.github.io/coremltools/docs-guides/source/mlmodel.html
 def load_model(path, function_name=None):
     """Load a CoreML model, handling both .mlmodelc and .mlpackage formats."""
     path = Path(path)
     compute_unit = ct.ComputeUnit.CPU_AND_NE
     
+    # fxl: here is how model is loaded (constructed...simply a wrapper around coremltools)
+    #   MLModel vs. CompiledMLModel .... (no control of their weights etc??
     try:
         if path.suffix == '.mlmodelc':
             # For compiled models (.mlmodelc), use CompiledMLModel
@@ -399,6 +402,8 @@ def initialize_causal_mask(context_length):
     print(f"\nInitialized causal mask for context length {context_length}")
     return causal_mask
 
+# fxl: this.   slice a input seq to default subseq (called 'batch' = 64, funny
+#       also: "Every new chunk can attend back to all prior tokens" (chatgpt XXX undestadn better)
 def run_prefill(embed_model, ffn_models, input_ids, context_pos, context_length, batch_size=64, state=None, causal_mask=None):
     """Run prefill on the input sequence."""
     # Use provided causal mask or create one if not provided
@@ -406,13 +411,14 @@ def run_prefill(embed_model, ffn_models, input_ids, context_pos, context_length,
         causal_mask = make_causal_mask(context_length, 0)
         causal_mask = torch.tensor(causal_mask, dtype=torch.float16)
     
-    # Process in batches
+    # Process in batches    
+    #    fxl: slice a input seq to default subseq (called 'batch', funny
     batch_pos = 0
     while batch_pos < context_pos:
         batch_end = min(batch_pos + batch_size, context_pos)
         current_batch_size = batch_end - batch_pos
         
-        # Get current batch
+        # Get current batch     fxl: slice ... 
         batch_input = input_ids[:, batch_pos:batch_end]
         
         # Always pad to full batch size for prefill
@@ -434,7 +440,7 @@ def run_prefill(embed_model, ffn_models, input_ids, context_pos, context_length,
             })['hidden_states']
         )
         
-        # Run through FFN chunks with state
+        # Run through FFN chunks with state   fxl: "stateful", passing the state along, accumulatese KV cache, intermediate state...
         for ffn_model in ffn_models:
             if isinstance(ffn_model, dict):
                 inputs = {
@@ -443,7 +449,8 @@ def run_prefill(embed_model, ffn_models, input_ids, context_pos, context_length,
                     'causal_mask': batch_causal_mask.numpy(), # [1, 1, 64, context_length]
                     'current_pos': np.array([batch_pos], dtype=np.int32)  # [1]
                 }
-                output = ffn_model['prefill'].predict(inputs, state)
+                # fxl: predict with "state" as input (seems kvcache, also used in prefill, across input slices
+                output = ffn_model['prefill'].predict(inputs, state)      
                 hidden_states = torch.from_numpy(output['output_hidden_states'])
         
         batch_pos = batch_end
@@ -490,7 +497,7 @@ def generate_next_token(embed_model, ffn_models, lmhead_model, input_ids, pos, c
     # Debug print
     #print("\nLM Head output keys:", list(lm_output.keys()))
     
-    # Combine logits1-8 if they exist
+    # Combine logits1-8 if they exist       # fxl:what this means?
     if 'logits1' in lm_output:
         # Concatenate all logits parts
         logits_parts = []

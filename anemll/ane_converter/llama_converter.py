@@ -3,6 +3,8 @@
 #  Use of this source code is governed by a MIT license that can be
 #  found in the LICENSE.txt file or at https://opensource.org/license/mit
 
+# 4/17/25, fxl comments
+
 from .base_converter import BaseConverter
 import coremltools as ct
 import coremltools.optimize as cto
@@ -85,7 +87,7 @@ class LlamaConverter(BaseConverter):
         num_layers = model.config.num_hidden_layers  # Get total number of layers from config
 
         if not ENABLE_UNIFIED_CACHE and part:
-            # Calculate layer range for this part
+            # Calculate layer range for this part      fxl: dual, quad, octo.. abtrariy namoing...
             if part.startswith('2D') or part.startswith('prefill_2D'):
                 num_layers_this_part = num_layers // 2
             elif part.startswith('2Q'):
@@ -101,8 +103,9 @@ class LlamaConverter(BaseConverter):
             
             print(f"GetTransformerStates part={part} ENABLE_UNIFIED_CACHE={ENABLE_UNIFIED_CACHE} num_layers_this_part={num_layers_this_part} model.config.num_hidden_layers={model.config.num_hidden_layers}")
 
-
+            # fxl: a "group" then -- a subset of layers?
             # Combined KV cache states per group
+            # fxl: Transformer states = KV cache used in attention layers
             states = [
                 ct.StateType(
                     wrapped_type=ct.TensorType(
@@ -118,7 +121,7 @@ class LlamaConverter(BaseConverter):
             print(f"GetTransformerStates states: StateType name={states[0].name}, shape={states[0].wrapped_type.shape}")
         else:
             # Create states for all layers (unified cache)
-            num_layers_this_part = num_layers *2  
+            num_layers_this_part = num_layers *2        # fxl: why x2? k & v? 
             print(f"GetTransformerStates part={part} ENABLE_UNIFIED_CACHE={ENABLE_UNIFIED_CACHE} num_layers_this_part={num_layers_this_part} model.config.num_hidden_layers={model.config.num_hidden_layers}")
 
             states = [
@@ -407,7 +410,8 @@ class LlamaConverter(BaseConverter):
                     ),
                 )
                 
-                # Apply quantization in a try-except block
+                # Apply quantization in a try-except block      fxl: direclty call coremltools' LUT quant schemes
+                #     fxl: https://apple.github.io/coremltools/docs-guides/source/opt-overview.html 
                 try:
                     self.converted_model = cto.coreml.palettize_weights(self.converted_model, config)
                     print("LUT quantization completed")
@@ -456,9 +460,11 @@ class LlamaConverter(BaseConverter):
         traced_model = torch.jit.trace(wrapper, sample_input)
         
         # Define flexible input shapes
+        #   fxl: https://apple.github.io/coremltools/docs-guides/source/flexible-inputs.html
+        #           multiple possible input shapes
         input_shape = ct.EnumeratedShapes(
-            shapes=[[1, 1], [1, self.batch_size]],  # Support single token and batch_size tokens
-            default=[1, 1]  # Use single token as default
+            shapes=[[1, 1], [1, self.batch_size]],  # Support single token and batch_size tokens   # fxl: the latter for prefil 
+            default=[1, 1]  # Use single token as default    # fxl: "default" is faster 
         )
         
         print(f"Converting embeddings model with input shape: {input_shape}")
@@ -474,7 +480,7 @@ class LlamaConverter(BaseConverter):
                 )
             ],
             outputs=[
-                ct.TensorType(name="hidden_states", dtype=np.float16)
+                ct.TensorType(name="hidden_states", dtype=np.float16)   # fxl: NB fp16
             ],
             compute_precision=ct.precision.FLOAT16,
             compute_units=ct.ComputeUnit.CPU_AND_NE,
@@ -598,6 +604,7 @@ class LlamaConverter(BaseConverter):
         
         return mlmodel
 
+    # fxl: this for decoding, hence batch=1 seq=1
     def convert_FFN(self, model, chunk_idx=None):
         """Convert Feed-Forward Network layers to CoreML format.
         
@@ -608,6 +615,7 @@ class LlamaConverter(BaseConverter):
         print("\nConverting FFN layers...")
         total_layers = model.config.num_hidden_layers
         
+        # fxl: NB, a "chunk" is for a range of sequential layers
         if chunk_idx is not None:
             layers_per_chunk = total_layers // self.num_chunks
             start_layer = chunk_idx * layers_per_chunk
@@ -617,7 +625,7 @@ class LlamaConverter(BaseConverter):
             print(f"  Layers per chunk: {layers_per_chunk}")
             print(f"  This chunk: layers [{start_layer}..{end_layer-1}]")
             if chunk_idx == 0:
-                print("  First chunk: includes input layer")
+                print("  First chunk: includes input layer")    # fxl:: means what
             if chunk_idx == self.num_chunks - 1:
                 print("  Last chunk: includes output layer")
         else:
@@ -625,7 +633,7 @@ class LlamaConverter(BaseConverter):
             end_layer = None
             print("Processing all layers at once")
         
-        class FFNWrapper(torch.nn.Module):
+        class FFNWrapper(torch.nn.Module):      # fxl: make these FFN layers  a torch model??? (to trace them
             def __init__(self, model, start_layer=0, end_layer=None):
                 super().__init__()
                 self.model = model
@@ -633,6 +641,8 @@ class LlamaConverter(BaseConverter):
                 self.end_layer = end_layer
                 self.states = LlamaConverter.GetTransformerStates(model, part='2', prefix="model.model.")
                 
+            # fxl: invoke the model's forward method? only on a subset of layers? 
+            #           this goes to LlamaModel.forward()?? XXX to track
             def forward(self, hidden_states, position_ids, causal_mask, current_pos):
                 return self.model.model(
                     hidden_states=hidden_states,
@@ -662,7 +672,7 @@ class LlamaConverter(BaseConverter):
             )
             current_pos = torch.tensor([0], dtype=torch.long, device=TEST_DEVICE)
             
-            # Trace model
+            # Trace model  (fxl: a subst of tarnsfomer blocks
             print("Tracing FFN model...")
             traced_model = torch.jit.trace(
                 wrapper, 
@@ -689,7 +699,7 @@ class LlamaConverter(BaseConverter):
                 states=wrapper.states,
                 compute_precision=ct.precision.FLOAT16,
                 compute_units=ct.ComputeUnit.CPU_AND_NE,
-                minimum_deployment_target=ct.target.iOS18,
+                minimum_deployment_target=ct.target.iOS18,      # fxl: does this matter? 
                 convert_to="mlprogram"
             )
             
@@ -707,6 +717,11 @@ class LlamaConverter(BaseConverter):
             print(f"Error during FFN conversion: {str(e)}")
             raise
 
+    # fxl: 'Prefill' is singled out, b/c the shape is dynamic
+    # fxl: 4/17/25 the basic idea seems: npu cannot process a long seq. therefore, cut into small subseq. 
+    #   as such, prefill cannot be done in one shot, instead it must process each subseq. and "current_pos"
+    #   is the starting position of the subseq. there's a KVcache  maintained across subseqs. and attention is computed
+    #   and computed across the subseq    (understood 2/5
     def convert_prefill(self, model, chunk_idx=None):
         """Convert transformer for prefill mode to CoreML format.
         
@@ -732,6 +747,7 @@ class LlamaConverter(BaseConverter):
                 self.model = model
                 self.start_layer = start_layer
                 self.end_layer = end_layer
+                # fxl: here, "state" --- kvcache??? cf how llama model is built
                 self.states = LlamaConverter.GetTransformerStates(model, part='2_prefill', prefix="model.model.")
             
             def forward(self, hidden_states, position_ids, causal_mask, current_pos):
@@ -750,7 +766,7 @@ class LlamaConverter(BaseConverter):
             wrapper = PrefillWrapper(model, start_layer, end_layer)
             wrapper.eval()
             
-            # Create sample inputs with correct shapes for prefill
+            # Create sample inputs with correct shapes for prefill    # fxl: why not context_len???
             hidden_states = torch.zeros(
                 (1, self.batch_size, model.config.hidden_size),  # Shape: (1, batch_size, hidden)
                 dtype=torch.float16, device=TEST_DEVICE
@@ -832,6 +848,9 @@ def parse_args():
     
     return parser.parse_args()
 
+# fxl: the main func for convert a model (going through its 3 parts ... 
+# fxl: at this point, a torch llama model is built, and loaded wit weights
+#    split part 123.... emb, ffn, lm_head (?) how about attn??
 def test_conversion(model_path=None, output_path=None, context_length=512, lut_bits=4, 
                    model=None, skip_load_weights=False, split_part='123', 
                    batch_size=64, num_chunks=1, prefix='llama', output_dir='.'):
@@ -859,7 +878,7 @@ def test_conversion(model_path=None, output_path=None, context_length=512, lut_b
         else:
             print("\nSkipping weights loading")
     
-    # Create converter with batch_size
+    # Create converter with batch_size      (fxl: batch_size is for prefill slicing???)
     converter = LlamaConverter(
         model=model,
         context_length=context_length,
@@ -871,7 +890,7 @@ def test_conversion(model_path=None, output_path=None, context_length=512, lut_b
     # Initialize converted_model as None
     converted_model = None
     
-    # Handle FFN and prefill conversions (both chunked and non-chunked)
+    # Handle FFN and prefill conversions (both chunked and non-chunked)  # fxl: FFN means transfornmer blocks....
     if split_part in ['2', '2_prefill']:
         converted_models = []
         chunks_to_process = range(num_chunks)
@@ -891,13 +910,14 @@ def test_conversion(model_path=None, output_path=None, context_length=512, lut_b
             # For single chunk (num_chunks=1), don't pass chunk_idx
             chunk_idx = i if num_chunks > 1 else None
             
+            # fxl: XXX undrstgand better "prefill"
             if split_part == '2':
                 chunk_model = converter.convert_FFN(model, chunk_idx=i)
             else:  # '2_prefill'
                 chunk_model = converter.convert_prefill(model, chunk_idx=i)
                 
             if chunk_output_path:
-                # Add metadata before saving
+                # Add metadata before saving    fxl: add metadata to coreml models (why needed?
                 AddMetadata(chunk_model, {
                     'context_length': context_length,
                     'num_chunks': num_chunks,
@@ -998,8 +1018,8 @@ def main():
     
     print(f"\nConverting model from: {model_path}")
     print(f"Output filename prefix: {args.prefix}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Context length: {args.context_length}")
+    print(f"Batch size: {args.batch_size}")         # fxl: for prefill slicing 
+    print(f"Context length: {args.context_length}")     # fxl: for kvcache leng
     if args.lut:
         print(f"LUT quantization: {args.lut} bits")
     if args.chunk:
@@ -1008,7 +1028,7 @@ def main():
     
     # Initialize and convert model
     try:
-        # Load config
+        # Load config       fxl: set up model arch.... XXX how to determine #layers etc?
         config_path = os.path.join(model_path, "config.json")
         if not os.path.exists(config_path):
             raise ValueError(f"Config file not found at {config_path}")
@@ -1024,7 +1044,7 @@ def main():
         print(f"  hidden_size: {config.hidden_size}")
         print(f"  vocab_size: {config.vocab_size}")
         
-        # Initialize model
+        # Initialize model  (fxl: build a torch llama model out of the config
         model = LlamaForCausalLM(config)
         
         # Load weights

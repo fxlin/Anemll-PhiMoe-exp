@@ -1,3 +1,9 @@
+# fxl
+is "DeepSeek-R1-8B" deepseek-r1-llama-8b??? guess so? 
+
+--------------
+
+
 # Converting DeepSeek Model
 
 > [!Important]

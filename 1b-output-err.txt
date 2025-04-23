@@ -1,0 +1,53 @@
+(myenv) felixlin@felixmacstudio01:~/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0$ python chat.py --meta ./meta.yaml
+
+Loaded parameters from ./meta.yaml:
+  Context Length: 512
+  Batch Size: 64
+  Num Chunks: 2
+  Models Directory: .
+  Embeddings: llama_embeddings_lut8
+  LM Head: llama_lm_head_lut8
+  FFN: llama_FFN_PF_lut8_chunk_01of02
+
+Using model directory: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0
+Context length: 512
+Using tokenizer path: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0
+
+Loading models...
+
+Loading embeddings model...
+Found model at: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc
+Loading from: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc
+
+Error loading models: {
+    NSLocalizedDescription = "Unable to load model: file:///Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/. Compile the model with Xcode or `MLModel.compileModel(at:)`. ";
+    NSUnderlyingError = "Error Domain=com.apple.CoreML Code=3 \"/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error\" UserInfo={NSLocalizedDescription=/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error}";
+}
+
+Please ensure all model files exist and are accessible.
+Expected files:
+  Embeddings: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8
+  LM Head: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_lm_head_lut8
+  FFN: /Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_FFN_PF_lut8_chunk_01of02
+
+Error: {
+    NSLocalizedDescription = "Unable to load model: file:///Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/. Compile the model with Xcode or `MLModel.compileModel(at:)`. ";
+    NSUnderlyingError = "Error Domain=com.apple.CoreML Code=3 \"/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error\" UserInfo={NSLocalizedDescription=/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error}";
+}
+Traceback (most recent call last):
+  File "/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/chat.py", line 832, in main
+    embed_model, ffn_models, lmhead_model, metadata = load_models(args,metadata)
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/chat.py", line 285, in load_models
+    embed_model = load_model(embed_path)
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/chat.py", line 179, in load_model
+    return ct.models.CompiledMLModel(str(path), compute_unit)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/felixlin/workspace-apple-silicon/myenv/lib/python3.11/site-packages/coremltools/models/_compiled_model.py", line 127, in __init__
+    self._proxy = _MLModelProxy(
+                  ^^^^^^^^^^^^^^
+RuntimeError: {
+    NSLocalizedDescription = "Unable to load model: file:///Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/. Compile the model with Xcode or `MLModel.compileModel(at:)`. ";
+    NSUnderlyingError = "Error Domain=com.apple.CoreML Code=3 \"/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error\" UserInfo={NSLocalizedDescription=/Users/felixlin/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/llama_embeddings_lut8.mlmodelc/coremldata.bin is not a valid .mlmodelc file because the first word (1936876918) is not recognizable. : unspecified iostream_category error}";
+}

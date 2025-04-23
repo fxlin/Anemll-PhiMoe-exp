@@ -1,3 +1,112 @@
+fxl  2025
+
+4-17-25 meta thought:
+
+# fxl, 4-17-25. basically construct the compute graph for llama model inference
+#       the key here is to partition the model (grou players, also do incremental prefill with kvcache...
+#       also, can map the op to ANE friendly ops (conv2d, ANE-softmax etc
+#       understdoo 2/5
+i guess this is necessary, otherwise 1. model too large to load 2. some ops are not optimized for ANEs 3. dynamic input shape ... can be a problem 
+is this really needed for all models to be supported??? 
+
+how about otehr LLMs for ANE projects? they dont do this right? or, models are already traced for them? (like they already have the compute graph
+
+
+why LUT quant?? why cannot use normal q4, q8, etc?  also supported, can try 
+
+# must use python3.9 (python3.11 missing pytorch2.6 package... which is needed for Half inference...)
+
+# environment 
+source ~/workspace-apple-silicon/myenv-python39/bin/activate
+cd workspace-apple-silicon/Anemll/
+
+# get pre converted models
+git clone https://huggingface.co/anemll/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0
+
+# self convert, rerequire macos 15 and coreml compiler installed.
+## non instruct model. can convert, but cannot chat.
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ 
+# llama3 1b isntruct model. convert good
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B-Instruct/ --output ~/models/Llama-3.2-1B-Instruct-coreml-fxl/ 
+# llama3 8b isntruct model. convert good
+./anemll/utils/convert_model.sh --model ~/models/llama-3-8b-Instruct/ --output ~/models/llama-3-8b-Instruct-coreml-fxl/ 
+
+# llama3 8b isntruct model. long context exp. save log 
+./anemll/utils/convert_model.sh \
+--model ~/models/llama-3-8b-Instruct/ \
+--output ~/models/llama-3-8b-Instruct-ctx4096-coreml-fxl/ \
+--context 4096 | tee /tmp/llama3-8b-ctx4096.log
+
+# restart from FFN conversion.... 
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
+--restart 3
+
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
+--only 1
+
+# ---  converted ok. good
+
+## -- chat.py, ok on preconverted model
+python ./tests/chat.py \
+--meta /models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/
+
+#   -- chat.py, failed on tokenizer of my converted model (TBD, should be easy
+python ./tests/chat.py \
+--meta ~/models/Llama-3.2-1B-Instruct-coreml-fxl/meta.yaml
+
+# to download model
+converted: 
+https://huggingface.co/anemll
+
+llama officail models:
+huggingface-cli login
+
+https://huggingface.co/settings/tokens
+
+# to run the model, downgrade numpy
+pip install "numpy<2"
+
+# always cpu execution, why???
+cd ~/models/anemll-Meta-Llama-3.2-3B-ctx512_0.1.1
+python chat.py --meta ./meta.yaml
+
+[output of llama 3b execution](./3b-output.txt)
+
+# pre-converted llama3 1b. can work, can gen meaingful outout, and uses ANE indeed
+cd anemll-swift-cli/
+swift run -c release anemllcli --meta ~/models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/meta.yaml \
+--prompt "List US Presidents"
+
+# self converted model llama3 1b. can work, can gen meaingful outout, and uses ANE indeed
+cd anemll-swift-cli/
+swift run -c release anemllcli \
+--meta ~/models/Llama-3.2-1B-Instruct-coreml-fxl/meta.yaml \
+--prompt "List US Presidents"
+
+# self converted model llama3 8b. can work, can gen meaingful outout, and uses ANE indeed
+cd anemll-swift-cli/
+swift run -c release anemllcli \
+--meta ~/models/llama-3-8b-Instruct-coreml-fxl/meta.yaml \
+--prompt "List US Presidents"
+
+# not working. complain about tokenizer. looks like the vanilla llama is not for chat (missing chat template in tokenizer config??
+swift run -c release anemllcli \
+ --meta "/Users/felixlin/models/Llama-3.2-1B-coreml-fxl/meta.yaml" \
+ --prompt "List US Presidents"
+
+ Error applying chat template: chatTemplate("This tokenizer does not have a chat template, and no template was passed.")
+Error applying chat template: chatTemplate("This tokenizer does not have a chat template, and no template was passed.")
+
+Assistant:
+Error during generation: inferenceError("Invalid position 0 for context length 1")
+Error: inferenceError("Invalid position 0 for context length 1")
+
+swift run -c release anemllcli \
+ --meta "/Users/felixlin/models/Llama-3.2-1B-coreml-fxl/meta.yaml" \
+ --prompt "List US Presidents" \
+
+--------------------- original README ------------------------
+
 # ANEMLL
 
 ANEMLL (pronounced like "animal") is an open-source project focused on accelerating the porting of Large Language Models (LLMs) to tensor processors, starting with the Apple Neural Engine (ANE).

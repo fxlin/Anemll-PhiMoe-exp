@@ -1,3 +1,13 @@
+# fxl 4/17/25
+combine then split again??
+ a combined model -- coreml's "multifunction model"
+combine b/c mltools can merge redudnantw eights in "infer" and "prefill" (they indeed 
+    share same weights
+    (only "FFN_PF" seem needed, after merging
+input: mlpackages for multiple model "parts"
+
+---------------------
+
 # Combine Models Documentation
 
 The `combine_models.py` utility is a crucial component in the ANEMLL workflow that optimizes model storage by merging Feed Forward Network (FFN) and Prefill model chunks into Multi-Function Chunks.
