@@ -1,11 +1,13 @@
-fxl  2025
+fxl  2025-04
+
+comments and addition of PhiMoe 3.5 model. as exp
 
 4-17-25 meta thought:
 
-# fxl, 4-17-25. basically construct the compute graph for llama model inference
-#       the key here is to partition the model (grou players, also do incremental prefill with kvcache...
-#       also, can map the op to ANE friendly ops (conv2d, ANE-softmax etc
-#       understdoo 2/5
+fxl, 4-17-25. basically construct the compute graph for llama model inference
+      the key here is to partition the model (grou players, also do incremental prefill with kvcache...
+      also, can map the op to ANE friendly ops (conv2d, ANE-softmax etc
+      understdoo 2/5
 i guess this is necessary, otherwise 1. model too large to load 2. some ops are not optimized for ANEs 3. dynamic input shape ... can be a problem 
 is this really needed for all models to be supported??? 
 
