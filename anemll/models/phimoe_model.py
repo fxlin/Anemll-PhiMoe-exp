@@ -21,6 +21,8 @@ import json
 from .base_model import BaseModel
 import torch.nn.init as init
 
+from .modeling_rope_utils import rope_config_validation
+
 # Model configuration constants
 MODEL_DTYPE = torch.float16  # Hardcoded to float16 for ANE support
 MLP_UP_SPLIT = 1   # Number of splits for MLP up-projection
@@ -56,6 +58,8 @@ ENABLE_VALUES = bool(0)  # Print tensor values for debugging
 
 # XXX TBD cf transformers: src/transformers/models/phimoe/configuration_phimoe.py
 class PhimoeConfig:
+    # fxl: here, construct "config" from kwargs. if from_json() is called, then only the following attributes are set
+    #       (and the rest from json are ignored 
     def __init__(self, **kwargs):
         # self.architectures = kwargs.get("architectures", ["LlamaForCausalLM"])   # no in use?
         self.attention_bias = kwargs.get("attention_bias", False)
@@ -73,11 +77,38 @@ class PhimoeConfig:
         self.num_key_value_heads = kwargs.get("num_key_value_heads", 8)
         # self.pretraining_tp = kwargs.get("pretraining_tp", 1)   # fxl what is this?
         self.rms_norm_eps = kwargs.get("rms_norm_eps", 1e-05)
-        # fxl: XXX more rope details, as phimoe has diff rope trick
-        self.rope_scaling = kwargs.get("rope_scaling", None)
-        if self.rope_scaling:
-            self.rope_scaling["rope_type"] = self.rope_scaling.get("rope_type", "llama3")
         self.rope_theta = kwargs.get("rope_theta", 1e6)
+
+        # fxl: MoE...
+        self.num_experts_per_tok = kwargs.get("num_experts_per_tok", 2)
+        self.num_local_experts = kwargs.get("num_local_experts", 16)
+        self.output_router_logits = kwargs.get("output_router_logits", False)
+        self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 0.001)
+        self.router_jitter_noise = kwargs.get("router_jitter_noise", 0.01)
+        self.input_jitter_noise = kwargs.get("input_jitter_noise", 0.0)
+
+        # fxl: rope scaling ...
+        self.rope_scaling = kwargs.get("rope_scaling", None)
+        # if self.rope_scaling:
+        #     self.rope_scaling["rope_type"] = self.rope_scaling.get("rope_type", "longrope")
+        if isinstance(self.rope_scaling, dict):
+            if "rope_type" not in self.rope_scaling:
+                self.rope_scaling["rope_type"] = self.rope_scaling.get("type", None)
+            if "original_max_position_embeddings" in self.rope_scaling:
+                self.original_max_position_embeddings = self.rope_scaling["original_max_position_embeddings"]
+            rope_scaling_short_mscale = self.rope_scaling.get("short_mscale", None)
+            rope_scaling_long_mscale = self.rope_scaling.get("long_mscale", None)
+            if not isinstance(rope_scaling_short_mscale, (int, float)):
+                raise ValueError(
+                    f"`rope_scaling`'s short_mscale field must be a number, got {rope_scaling_short_mscale}"
+                )
+            if not isinstance(rope_scaling_long_mscale, (int, float)):
+                raise ValueError(
+                    f"`rope_scaling`'s long_mscale field must be a number, got {rope_scaling_long_mscale}"
+                )        
+        rope_config_validation(self)
+        # breakpoint()
+
         # fxl: Whether the model's input and output word embeddings should be tied
         self.tie_word_embeddings = kwargs.get("tie_word_embeddings", False)
         # self.torch_required = kwargs.get("torch_dtype", "bfloat16")    # fxl: not in use?
@@ -99,6 +130,7 @@ class PhimoeConfig:
 
 # fxl: this is a standard layernorm (double centering?, not actually RMSNorm (which does not substract mean
 #         why? anyway, avoid using it 
+'''
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
@@ -130,7 +162,8 @@ class LlamaRMSNorm(nn.Module):
         hidden_states=(self.weight * hidden_states).to(input_dtype)
         #hidden_states = hidden_states.view(hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[3])
         return hidden_states.to(MODEL_DTYPE)
-        
+'''
+
 # fxl: not in use? XXX understand it better
 '''
 class NA_LayerNormANE(nn.Module):
@@ -203,9 +236,9 @@ def _compute_longrope_parameters(
     partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
     head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
     dim = int(head_dim * partial_rotary_factor)
-    long_factor = config.rope_scaling["long_factor"]
-    short_factor = config.rope_scaling["short_factor"]
-    factor = config.rope_scaling.get("factor")
+    long_factor = config.rope_scaling["long_factor"]   # fxl: a 64dim vector, per-dim scaling
+    short_factor = config.rope_scaling["short_factor"]  # fxl: a 64dim vector, per-dim scaling
+    factor = config.rope_scaling.get("factor")   # fxl: the ratio between the original and new max position embeddings. config does not have it?
     attention_factor = config.rope_scaling.get("attention_factor")   # fxl: in fact we dont have this. seems for RoPE
 
     # NOTE: Phi3 (and potentially other models) modify `max_position_embeddings` and have a
@@ -249,7 +282,7 @@ class PhimoeRotaryEmbedding(nn.Module):
         self.max_position_embeddings = config.max_position_embeddings     # fxl: for precomputed rope factors? (although rope can handle unlimited seq len)
         self.base = config.rope_theta
                 
-        # fxl: here we only support longrope
+        # fxl: here we only support "longrope", as in phimoe
         if config.rope_scaling is not None:
             self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
             self.short_mscale = config.rope_scaling.get("short_mscale")
@@ -261,14 +294,14 @@ class PhimoeRotaryEmbedding(nn.Module):
 
         # Generate and cache the inverse frequency buffer
         mscale = None       # fxl: mscale - "attention scaling factor" ("magnitude scale"?, used to scale the magnitude. 
-        if self.config.rope_scaling:
+        if config.rope_scaling:
             mscale = (
                 self.long_mscale
-                if self.max_position_embeddings > self.config.rope_scaling["original_max_position_embeddings"]
+                if self.max_position_embeddings > config.rope_scaling["original_max_position_embeddings"]
                 else self.short_mscale
             )
         #  fxl: 'creates a vector of frequencies used to compute the angular rotation at each position'
-        inv_freq, attention_scaling = _compute_longrope_parameters(self.config, TEST_DEVICE, self.max_position_embeddings)
+        inv_freq, attention_scaling = _compute_longrope_parameters(config, TEST_DEVICE, self.max_position_embeddings)
         # fxl: will use long_mscale or short_mscale .. which basically have same values??
         mscale = attention_scaling if mscale is None else mscale
         self.register_buffer("inv_freq", inv_freq)   # need this??
@@ -279,13 +312,14 @@ class PhimoeRotaryEmbedding(nn.Module):
         # freqs = torch.einsum("i,j->ij", t, self.inv_freq)  #  <--- same as above 
 
         emb = torch.cat((freqs, freqs), dim=-1)
+        # breakpoint()
 
         # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc
-        self.cos_cached = emb.cos() * mscale.view(1, self.max_position_embeddings, self.dim)
-        self.sin_cached = emb.sin() * mscale.view(1, self.max_position_embeddings, self.dim)        
+        self.cos_cached = (emb.cos() * mscale).view(1, self.max_position_embeddings, self.dim)
+        self.sin_cached = (emb.sin() * mscale).view(1, self.max_position_embeddings, self.dim)        
 
         if ENABLE_DEBUG2:
-            print(f"\n[TRACE] LlamaRotaryEmbedding initialized:")
+            print(f"\n[TRACE] RotaryEmbedding initialized:")
             print(f"  dim: {self.dim}")
             print(f"  max_position_embeddings: {self.max_position_embeddings}")
             print(f"  base: {self.base}")
@@ -706,7 +740,7 @@ class PhimoeAttention(nn.Module):
         """Forward pass with support for both single token and prefill modes."""
         batch_size, seq_length, _ = hidden_states.shape
         
-        print(f"\n[DEBUG] LlamaAttention Forward:")
+        print(f"\n[DEBUG] Attention Forward:")
         print(f"  Input shapes:")
         print(f"    hidden_states: {hidden_states.shape}")
         print(f"    attention_mask: {attention_mask.shape if attention_mask is not None else None}")
@@ -968,7 +1002,7 @@ class PhimoeDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx      # why needed?
         self.self_attn = PhimoeAttention(config, layer_idx)
-        self.mlp = PhimoeSparseMoeBlock(config)
+        self.block_sparse_moe = PhimoeSparseMoeBlock(config)
         
         # Use ANE_NORM if enabled, otherwise use RMSNorm
         if use_ane_norm:        # not implemented ... 
@@ -979,14 +1013,15 @@ class PhimoeDecoderLayer(nn.Module):
             self.post_attention_layernorm = nn.LayerNorm(
                 config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
 
-    # fxl: TBD XXX
+    # fxl: TBD XXX used??
     def forward(self, hidden_states, attention_mask=None, position_ids=None, 
                     kv_cache_layer=None, current_pos=None, IN_PREFILL=False):
+        assert False, "PhimoeDecoderLayer.forward() not implemented"
         # Self Attention
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
-        # Pass the layer's KV cache to attention, Class LlamaAttention
+        # Pass the layer's KV cache to attention, Class Attention
         if IN_PREFILL:
             hidden_states = self.self_attn.forward_prefill(
                 hidden_states=hidden_states,
@@ -1018,9 +1053,10 @@ def get_kv_cache_idx(layer_idx, num_layers, num_groups=1):
     layer_in_group_idx = layer_idx % layers_per_group
     return group_idx, layer_in_group_idx, layers_per_group
 
-# fxl: XXX 
 class PhimoeModel(BaseModel):
-    """Phi Moe model implementation."""
+    """Phi Moe model implementation.
+    fxl: these are transformer blocks; no embedding, no LM head
+    """
 
     def __init__(self, config, use_ane_norm=False, model_path=None):
         super().__init__(config)
@@ -1030,7 +1066,7 @@ class PhimoeModel(BaseModel):
 
         # Initialize layers
         self.layers = nn.ModuleList([
-            LlamaDecoderLayer(config, layer_idx=i, use_ane_norm=use_ane_norm) 
+            PhimoeDecoderLayer(config, layer_idx=i, use_ane_norm=use_ane_norm) 
             for i in range(config.num_hidden_layers)
         ])
         
@@ -1179,7 +1215,7 @@ class PhimoeModel(BaseModel):
         if not is_last_layer:
             # Add post-attention normalization and MLP
             post_attn = layer.post_attention_layernorm(hidden_states)
-            hidden_states = hidden_states + layer.mlp(post_attn)
+            hidden_states = hidden_states + layer.block_sparse_moe(post_attn)
         else:
             print("Skipping MLP for last layer in prefill mode")
 
@@ -1256,7 +1292,7 @@ class PhimoeModel(BaseModel):
 
         # Add post-attention normalization and MLP
         post_attn = layer.post_attention_layernorm(hidden_states)
-        hidden_states = hidden_states + layer.mlp(post_attn)
+        hidden_states = hidden_states + layer.block_sparse_moe(post_attn)
 
         if ENABLE_VALUES:
             print("SINGLE------------------------------------------------------------------------------------------------- ")
@@ -1304,7 +1340,7 @@ class PhimoeModel(BaseModel):
             end_layer: End processing at this layer (exclusive)
         """
         if ENABLE_DEBUG2:
-            print(f"LlamaModel.forward - hidden_states shape: {hidden_states.shape}")
+            print(f"PhimoeModel.forward - hidden_states shape: {hidden_states.shape}")
 
         # Get rotary embeddings
         if IN_PREFILL:
@@ -1318,7 +1354,7 @@ class PhimoeModel(BaseModel):
             current_pos, rotary_emb, start_layer, end_layer, IN_PREFILL=IN_PREFILL,
         )
         if ENABLE_DEBUG2:
-            print(f"LlamaModel.forward - hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
+            print(f"phimoeModel.forward - hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
 
         # Apply final normalization if this is the last block
         if end_layer is None or end_layer == len(self.layers):
@@ -1328,10 +1364,10 @@ class PhimoeModel(BaseModel):
                 return hidden_states[:,0:1,:]
             else:
                 if ENABLE_VALUES:
-                    print(f"LlamaModel.forward b4 self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
+                    print(f"phimoeModel.forward b4 self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
                 hidden_states = self.norm(hidden_states)
                 if ENABLE_VALUES:
-                    print(f"LlamaModel.forward AFTER self.norm hiddhistoryen_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
+                    print(f"phimoeModel.forward AFTER self.norm hiddhistoryen_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
 
         return hidden_states
 
@@ -1372,12 +1408,12 @@ class PhimoeModel(BaseModel):
 
         if end_layer is None or end_layer == len(self.layers):
             if ENABLE_VALUES:
-                print(f"LlamaModel.forward b4 self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
+                print(f"phimoeModel.forward b4 self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
             
             hidden_states = self.norm(hidden_states)
             
             if ENABLE_VALUES:
-                print(f"LlamaModel.forward AFTER self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
+                print(f"phimoeModel.forward AFTER self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
 
         return hidden_states
 
@@ -1444,12 +1480,18 @@ class PhimoeForCausalLM(nn.Module):
 
     def load_pretrained_weights(self, model_path, **kwargs):
         """Load pretrained weights for both the base model and embeddings."""
+        '''
+        fxl: loads weights from .safetensors files and maps them to a model that may have some reshaped or renamed layers
+        '''
+
         print("Loading pretrained weights...")
         
+        # load a list of safe tensor files ....  into a flat dict...
         file_dict = {}
         for file in tqdm(os.listdir(model_path)):
             if file.endswith(".safetensors"):
                 file_dict.update(safetensors.torch.load_file(os.path.join(model_path, file)))
+        # file_dict -- flat dictionary mapping parameter names to tensors
 
         # Handle lm_head weight
         lm_head_present = False
@@ -1469,7 +1511,8 @@ class PhimoeForCausalLM(nn.Module):
                 print("embed_tokens.weight not found. Unable to set lm_head.weight")
                 return False
 
-        # Filter and reshape weights
+        # Filter and reshape weights   (filter --> selects a subset of weights... lm_head etc
+        # below, split emb/head weights (as "splits"), and create new keys for them.... save back to "filtered_state_dict"
         filtered_state_dict = {}
         for k, v in file_dict.items():
             if k == "model.embed_tokens.weight":
@@ -1497,13 +1540,15 @@ class PhimoeForCausalLM(nn.Module):
 
         # Load filtered weights
         # fxl: "missing_keys is a list of str containing any keys that are expected"  https://pytorch.org/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.load_state_dict
+        #  below, load "filtered_state_dict" into model ("self") 
         missing_keys, unexpected_keys = self.load_state_dict(filtered_state_dict, strict=False)
-        if missing_keys:
-            print(f"Missing keys: {missing_keys}")
-        if unexpected_keys:
-            print(f"Unexpected keys: {unexpected_keys}")
 
-        # Load weights for the base model
+        if missing_keys:
+            print(f"(after loading emb/head) Missing keys: {missing_keys}")
+        if unexpected_keys:
+            print(f"(after loading emb/head) Unexpected keys: {unexpected_keys}")
+
+        # Load weights for the base model (base: transformer blocvks 
         #       fxl add dims, make weights 4D (but keep o_proj 2D)... for ANE optimization? (like it or coreml expects 4 dims?)
         base_filtered_dict = {}
         for k, v in file_dict.items():
@@ -1519,25 +1564,32 @@ class PhimoeForCausalLM(nn.Module):
                             reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                             base_filtered_dict[new_key] = reshaped_weight
                             print(f"Reshaped {new_key} from {v.shape} to {reshaped_weight.shape}")
-                    # Handle MLP weights
-                    elif 'mlp' in new_key and 'weight' in new_key:
+                    # MoE experts... eg 'model.layers.0.mlp.experts.0.w2.weight'
+                    elif 'mlp.experts.' in new_key and 'weight' in new_key:
                         reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                         base_filtered_dict[new_key] = reshaped_weight
-                        print(f"Reshaped {new_key} from {v.shape} to {reshaped_weight.shape}")
+                        print(f"Reshaped MoE weight {new_key} from {v.shape} to {reshaped_weight.shape}")
+                    # MoE router eg 'model.layers.0.mlp.gate.weight'
+                    elif "mlp.gate.weight" in new_key:
+                        reshaped_weight = v.view(v.shape[0], 1, 1, 1)
+                        base_filtered_dict[new_key] = reshaped_weight
+                        print(f"Reshaped MoE router weight {new_key} from {v.shape} to {reshaped_weight.shape}")
                     else:
                         base_filtered_dict[new_key] = v
-                elif new_key == "norm.weight":
+                elif new_key == "norm.weight" or new_key == "norm.bias":  # phi has layernorm with has bias, not RMS
                     base_filtered_dict[new_key] = v
 
-        # Load base model weights
+        # Load base model weights    (<--- will load base_filtered_dict from model ("self"
         missing_keys, unexpected_keys = self.model.load_state_dict(base_filtered_dict, strict=False)
-        
+
         # Filter out expected missing keys
         expected_missing = ['kv_cache_0']  # KV cache buffer is initialized separately
         expected_missing.extend([f'layers.{i}.self_attn.rotary_emb.inv_freq' for i in range(self.config.num_hidden_layers)])
         
+        # "actual_missing" -- unexpected keys in model 
         actual_missing = [k for k in missing_keys if k not in expected_missing]
-        if not actual_missing and not unexpected_keys:
+        # if not actual_missing and not unexpected_keys:   # fxl <-- this is correct, but for testing we may load fewer layers
+        if not actual_missing:
             print("Pretrained weights loaded successfully")
             # fxl: these tensors (?) are "expected", but not provided as part of models. so they were initialized as part of model construction
             if missing_keys:
@@ -1548,7 +1600,7 @@ class PhimoeForCausalLM(nn.Module):
         else:
             print("Pretrained weights loaded with some issues:")
             if actual_missing:
-                print(f"Missing keys: {actual_missing}")
+                print(f"(actual) Missing keys: {actual_missing}")
             if unexpected_keys:
                 print(f"Unexpected keys: {unexpected_keys}")
             return False
@@ -1611,7 +1663,7 @@ class PhimoeForCausalLM(nn.Module):
     ) -> torch.Tensor:
         """Forward pass for causal language modeling."""
         if ENABLE_DEBUG:
-            print(f"LlamaForCausalLM::forward called with input_ids: {input_ids.shape}, update_mask: {update_mask.shape}, position_ids: {position_ids.shape}, causal_mask: {causal_mask.shape}, current_pos: {current_pos}")
+            print(f"phimoeForCausalLM::forward called with input_ids: {input_ids.shape}, update_mask: {update_mask.shape}, position_ids: {position_ids.shape}, causal_mask: {causal_mask.shape}, current_pos: {current_pos}")
         # Get embeddings
 
         # Assert input_ids is a 2D tensor
@@ -1625,9 +1677,9 @@ class PhimoeForCausalLM(nn.Module):
         hidden_states = hidden_states.to(MODEL_DTYPE)
 
         if ENABLE_VALUES:
-            print(f"LlamaForCausalLM::embed_tokens weight dtype: {self.embed_tokens.weight.dtype}")
-            print(f"LlamaForCausalLM::embed_tokens input_idss (values):{input_ids.tolist()}")
-            print(f"LlamaForCausalLM::embed_tokens model input hidden states (first 16 values):{hidden_states[0,0,:16].tolist()}")
+            print(f"phimoeForCausalLM::embed_tokens weight dtype: {self.embed_tokens.weight.dtype}")
+            print(f"phimoeForCausalLM::embed_tokens input_idss (values):{input_ids.tolist()}")
+            print(f"phimoeForCausalLM::embed_tokens model input hidden states (first 16 values):{hidden_states[0,0,:16].tolist()}")
 
         # Process through transformer layers
         hidden_states = self.model(

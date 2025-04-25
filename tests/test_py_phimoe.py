@@ -146,7 +146,7 @@ class TestPhimoeModel(unittest.TestCase):
         
         This method:
         1. Loads model configuration from json
-        2. Initializes the PhimoeForCausalLM model
+        2. Initializes the PhimoeForCausalLM model   <----- fxl: this ... load whole model 
         3. Loads pretrained weights if available
         4. Verifies proper weight loading
         5. Sets model to evaluation mode
@@ -183,7 +183,7 @@ class TestPhimoeModel(unittest.TestCase):
         # Initialize model
         cls.model = PhimoeForCausalLM(cls.config, enable_coreml=False, use_ane_norm=False)
         
-        print(f"  cls.config.torch_required: {cls.config.torch_required}")      # <--- needed???
+        # print(f"  cls.config.torch_required: {cls.config.torch_required}")      # <--- needed???
 
         # Load pretrained weights if available
         if os.path.exists(MODEL_PATH):
@@ -408,6 +408,7 @@ class TestPhimoeModel(unittest.TestCase):
         5. EOT token detection and generation stopping
         6. Proper text decoding and output formatting
         """
+        breakpoint()
         # Initialize tokenizer
         tokenizer = initialize_tokenizer(MODEL_PATH)
         print(f"\n[DEBUG] Tokenizer info:")

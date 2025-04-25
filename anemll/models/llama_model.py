@@ -767,7 +767,7 @@ class LlamaModel(BaseModel):
             for i in range(config.num_hidden_layers)
         ])
         
-        # Initialize normalization
+        # Initialize normalization  (fxl: one norm,  applied at the enf of all layers, not per layer)
         if use_ane_norm:
             self.norm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
         else:
