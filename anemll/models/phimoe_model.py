@@ -3,12 +3,9 @@
 #  Use of this source code is governed by a MIT license that can be
 #  found in the LICENSE.txt file or at https://opensource.org/license/mit
 
-# fxl, 4-17-25. basically construct the compute graph for llama model inference
-#       the key here is to partition the model (grou players, also do incremental prefill with kvcache...
-#       also, can map the op to ANE friendly ops (conv2d, ANE-softmax etc
-#       understdoo 2/5
-# does it cf here? https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
-#    ^ ^ naming similar but much content diff
+# 4/22/25, fxl, based on llama_model.py
+#  also: https://github.com/huggingface/transformers/blob/v4.51.3/src/transformers/models/phimoe/modeling_phimoe.py
+
 from ..ane_converter.base_converter import BaseConverter
 import coremltools as ct
 import torch
@@ -52,38 +49,41 @@ ENABLE_LOGITS2 = bool(0)    # Return 2 logits arrays
 ENABLE_COREML = bool(0)     # CoreML-specific returns
 
 # Debug flags
-ENABLE_DEBUG =  bool(0)  # General debug info
-ENABLE_DEBUG2 = bool(0)  # Detailed debug for single token generation
-ENABLE_DEBUG3 = bool(0)  # Detailed debug for prefill mode
+ENABLE_DEBUG =  bool(1)  # General debug info
+ENABLE_DEBUG2 = bool(1)  # Detailed debug for single token generation
+ENABLE_DEBUG3 = bool(1)  # Detailed debug for prefill mode
 ENABLE_VALUES = bool(0)  # Print tensor values for debugging
 
-class LlamaConfig:
+# XXX TBD cf transformers: src/transformers/models/phimoe/configuration_phimoe.py
+class PhimoeConfig:
     def __init__(self, **kwargs):
-        self.architectures = kwargs.get("architectures", ["LlamaForCausalLM"])
+        # self.architectures = kwargs.get("architectures", ["LlamaForCausalLM"])   # no in use?
         self.attention_bias = kwargs.get("attention_bias", False)
         self.attention_dropout = kwargs.get("attention_dropout", 0.0)
-        self.bos_token_id = kwargs.get("bos_token_id", 128000)
-        self.eos_token_id = kwargs.get("eos_token_id", 128001)
+        self.bos_token_id = kwargs.get("bos_token_id", 1)
+        self.eos_token_id = kwargs.get("eos_token_id", 2)
         self.hidden_act = kwargs.get("hidden_act", "silu")
         self.hidden_size = kwargs.get("hidden_size", 4096)
         self.initializer_range = kwargs.get("initializer_range", 0.02)
-        self.intermediate_size = kwargs.get("intermediate_size", 14336)
-        self.max_position_embeddings = kwargs.get("max_position_embeddings", 8192)      # fxl: fo precomputed rope factors
-        self.model_type = kwargs.get("model_type", "llama")
+        self.intermediate_size = kwargs.get("intermediate_size", 6400)
+        self.max_position_embeddings = kwargs.get("max_position_embeddings", 4096*32)      # fxl: fo precomputed rope factors.
+        self.model_type = kwargs.get("model_type", "phimoe")
         self.num_attention_heads = kwargs.get("num_attention_heads", 32)
         self.num_hidden_layers = kwargs.get("num_hidden_layers", 32)
         self.num_key_value_heads = kwargs.get("num_key_value_heads", 8)
-        self.pretraining_tp = kwargs.get("pretraining_tp", 1)
+        # self.pretraining_tp = kwargs.get("pretraining_tp", 1)   # fxl what is this?
         self.rms_norm_eps = kwargs.get("rms_norm_eps", 1e-05)
+        # fxl: XXX more rope details, as phimoe has diff rope trick
         self.rope_scaling = kwargs.get("rope_scaling", None)
         if self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling.get("rope_type", "llama3")
-        self.rope_theta = kwargs.get("rope_theta", 500000.0)
+        self.rope_theta = kwargs.get("rope_theta", 1e6)
+        # fxl: Whether the model's input and output word embeddings should be tied
         self.tie_word_embeddings = kwargs.get("tie_word_embeddings", False)
-        self.torch_required = kwargs.get("torch_dtype", "bfloat16")
-        self.transformers_version = kwargs.get("transformers_version", "4.40.0.dev0")
+        # self.torch_required = kwargs.get("torch_dtype", "bfloat16")    # fxl: not in use?
+        # self.transformers_version = kwargs.get("transformers_version", "4.40.0.dev0") # fxl: not in use?
         self.use_cache = kwargs.get("use_cache", True)
-        self.vocab_size = kwargs.get("vocab_size", 128257)  # Set to 128257 to match HF
+        self.vocab_size = kwargs.get("vocab_size", 32064)  # phi has 32k vocab, en only
         self.context_length = kwargs.get("context_length", CONTEXT_LENGTH)
         self.state_length = kwargs.get("state_length", STATE_LENGTH)
 
@@ -97,10 +97,12 @@ class LlamaConfig:
     def __str__(self):
         return "\n".join(f"{key}: {value}" for key, value in self.__dict__.items())
 
+# fxl: this is a standard layernorm (double centering?, not actually RMSNorm (which does not substract mean
+#         why? anyway, avoid using it 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
-        LlamaRMSNorm is equivalent to T5LayerNorm
+        LlamaRMSNorm is equivalent to T5LayerNorm        
         """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
@@ -129,7 +131,8 @@ class LlamaRMSNorm(nn.Module):
         #hidden_states = hidden_states.view(hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[3])
         return hidden_states.to(MODEL_DTYPE)
         
-# fxl: not in use?        
+# fxl: not in use? XXX understand it better
+'''
 class NA_LayerNormANE(nn.Module):
     """ LayerNorm optimized for Apple Neural Engine (ANE) execution
     """
@@ -153,11 +156,91 @@ class NA_LayerNormANE(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.eps).to(MODEL_DTYPE) 
         hidden_states = (self.weight * hidden_states).to(MODEL_DTYPE)
         return hidden_states
+'''
+
+# fxl: src/transformers/modeling_rope_utils.py
+
+# This maps the "rope_type" string field in rope config to the corresponding function to compute the RoPE parameters
+# from the model config. You can append new {'rope_type': callable} pairs to this dictionary to enable custom RoPE
+# parameterizations, as long as the callable has the same signature.
+# ROPE_INIT_FUNCTIONS = {
+    # "default": _compute_default_rope_parameters,
+    # "linear": _compute_linear_scaling_rope_parameters,
+    # "dynamic": _compute_dynamic_ntk_parameters,
+    # "yarn": _compute_yarn_parameters,
+    # "longrope": _compute_longrope_parameters,
+    # "llama3": _compute_llama3_parameters,
+# }
+
+def _compute_longrope_parameters(
+    config, device: "torch.device", seq_len: Optional[int] = None, **rope_kwargs
+) -> tuple["torch.Tensor", float]:
+    """
+    Computes the inverse frequencies with LongRoPE scaling. Please refer to the
+    [original implementation](https://github.com/microsoft/LongRoPE)
+    Args:
+        config ([`~transformers.PretrainedConfig`]):
+            The model configuration.
+        device (`torch.device`):
+            The device to use for initialization of the inverse frequencies.
+        seq_len (`int`, *optional*):
+            The current sequence length.
+        rope_kwargs (`Dict`, *optional*):
+            BC compatibility with the previous RoPE class instantiation, will be removed in v4.45.
+    Returns:
+        Tuple of (`torch.Tensor`, `float`), containing the inverse frequencies for the RoPE embeddings and the
+        post-processing scaling factor applied to the computed cos/sin.
+    """
+    # TODO (joao): use the new `original_max_position_embeddings` from rope_scaling
+    # No need to keep BC with longrope, unreleased when this new pattern was created.
+    if len(rope_kwargs) > 0:
+        raise ValueError(
+            "Unexpected arguments: `**rope_kwargs` should be unset in `_compute_longrope_parameters`, got "
+            f"{rope_kwargs}"
+        )
+
+    base = config.rope_theta
+    partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
+    head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+    dim = int(head_dim * partial_rotary_factor)
+    long_factor = config.rope_scaling["long_factor"]
+    short_factor = config.rope_scaling["short_factor"]
+    factor = config.rope_scaling.get("factor")
+    attention_factor = config.rope_scaling.get("attention_factor")   # fxl: in fact we dont have this. seems for RoPE
+
+    # NOTE: Phi3 (and potentially other models) modify `max_position_embeddings` and have a
+    # `original_max_position_embeddings` field containing the pretrained value. They use the ratio between these two
+    # values to compute the default attention scaling factor, instead of using `factor`.
+    if hasattr(config, "original_max_position_embeddings"):
+        original_max_position_embeddings = config.original_max_position_embeddings
+        factor = config.max_position_embeddings / config.original_max_position_embeddings
+    else:
+        original_max_position_embeddings = config.max_position_embeddings
+
+    # Sets the attention factor as suggested in the paper
+    if attention_factor is None:
+        if factor <= 1.0:
+            attention_factor = 1.0
+        else:
+            attention_factor = math.sqrt(1 + math.log(factor) / math.log(original_max_position_embeddings))
+
+    # Compute the inverse frequencies -- scaled based on the target sequence length
+    if seq_len and seq_len > original_max_position_embeddings:
+        ext_factors = torch.tensor(long_factor, dtype=torch.float32, device=device)
+    else:
+        ext_factors = torch.tensor(short_factor, dtype=torch.float32, device=device)
+    inv_freq_shape = torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim
+    inv_freq = 1.0 / (ext_factors * base**inv_freq_shape)
+
+    return inv_freq, attention_factor
+
 
 # fxl 4/21/25 understood 3/5
 #       also, "inv_freq" is registerd and saved ni model. but will __init__ be excuted on coreml and produce cos_cached?
 #      for torhc.jit.trace, __init__() is not executed; only forward() is traced. 
-class LlamaRotaryEmbedding(nn.Module):
+#       cf: LlamaRotaryEmbedding
+#    cf: src/transformers/models/phimoe/modeling_phimoe.py   PhimoeRotaryEmbedding
+class PhimoeRotaryEmbedding(nn.Module):
     """Rotary positional embeddings for LLaMA model."""
     
     def __init__(self, config):
@@ -165,25 +248,42 @@ class LlamaRotaryEmbedding(nn.Module):
         self.dim = config.hidden_size // config.num_attention_heads
         self.max_position_embeddings = config.max_position_embeddings     # fxl: for precomputed rope factors? (although rope can handle unlimited seq len)
         self.base = config.rope_theta
-        
+                
+        # fxl: here we only support longrope
+        if config.rope_scaling is not None:
+            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+            self.short_mscale = config.rope_scaling.get("short_mscale")
+            self.long_mscale = config.rope_scaling.get("long_mscale")
+        else:
+            self.rope_type = "default"
+        # self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        assert(self.rope_type == "longrope"), f"Unsupported rope_type: {self.rope_type}. Only 'longrope' is supported."
+
         # Generate and cache the inverse frequency buffer
+        mscale = None       # fxl: mscale - "attention scaling factor" ("magnitude scale"?, used to scale the magnitude. 
+        if self.config.rope_scaling:
+            mscale = (
+                self.long_mscale
+                if self.max_position_embeddings > self.config.rope_scaling["original_max_position_embeddings"]
+                else self.short_mscale
+            )
         #  fxl: 'creates a vector of frequencies used to compute the angular rotation at each position'
-        #     NB this only cal for each "channel" (self.dim). 
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(TEST_DEVICE) / self.dim))
-        self.register_buffer("inv_freq", inv_freq)
-        # fxl: 'register_buffer: This tensor is part of the model (like a parameter), but it’s not a learnable weight``
+        inv_freq, attention_scaling = _compute_longrope_parameters(self.config, TEST_DEVICE, self.max_position_embeddings)
+        # fxl: will use long_mscale or short_mscale .. which basically have same values??
+        mscale = attention_scaling if mscale is None else mscale
+        self.register_buffer("inv_freq", inv_freq)   # need this??
 
         # Cache cos and sin values for positions
         t = torch.arange(self.max_position_embeddings, device=TEST_DEVICE).type_as(self.inv_freq) # fxl: a 1D tensor of token positions
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)  # fxl: For each position i and dimension j, compute product
+        freqs = torch.outer(t, self.inv_freq)
+        # freqs = torch.einsum("i,j->ij", t, self.inv_freq)  #  <--- same as above 
+
         emb = torch.cat((freqs, freqs), dim=-1)
-        # fxl: 'Each angle value is duplicated, because RoPE rotates each pair of adjacent dimensions, and we need one angle per pair — which affects two channels'
-        #      ^^ not sure if it is right. feels like dpulicate angles for "efficiency trick" below. XXX understand btr
 
         # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc
-        self.cos_cached = emb.cos().view(1, self.max_position_embeddings, self.dim)
-        self.sin_cached = emb.sin().view(1, self.max_position_embeddings, self.dim)
-        
+        self.cos_cached = emb.cos() * mscale.view(1, self.max_position_embeddings, self.dim)
+        self.sin_cached = emb.sin() * mscale.view(1, self.max_position_embeddings, self.dim)        
+
         if ENABLE_DEBUG2:
             print(f"\n[TRACE] LlamaRotaryEmbedding initialized:")
             print(f"  dim: {self.dim}")
@@ -200,7 +300,7 @@ class LlamaRotaryEmbedding(nn.Module):
         return self.cos_cached.to(dtype=x.dtype), self.sin_cached.to(dtype=x.dtype)
 
     # fxl: uncelar where the input/outpu tensdor is (re)layouted in half-and-half layout
-    #  ... unused??
+    # .. not in use?? so not checked 
     def rotate(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         """Apply rotary position embeddings to input tensor x."""
         # Ensure tensor is contiguous and get dimensions
@@ -242,135 +342,288 @@ class LlamaRotaryEmbedding(nn.Module):
 
         return rotated.to(MODEL_DTYPE)
 
-class LlamaMLP(nn.Module):
-    def __init__(self, config: LlamaConfig):
+######################################################
+# below: directly copied from transformers 
+
+
+
+def sparsemixer(scores, jitter_eps, training, top_k=2):
+    """
+    Sparse mixer function to select top-k experts and compute multipliers.
+    Based on the paper: https://arxiv.org/pdf/2409.12136
+    We first replace the TopK(·) function as random sampling of discrete variables
+    in model training. Then, following Liu et al. (2023a) and Liu et al. (2023b), we apply Heun's
+    third order method to approximate the expert routing gradient and construct a modified
+    back-propagation to give a mathematically sound gradient estimation for expert routing.
+
+    Args:
+        scores (torch.Tensor): Input scores tensor.
+        jitter_eps (float): Jitter epsilon for numerical stability.
+        training (bool): Flag indicating if the model is in training mode.
+        top_k (int): Number of top experts to select.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Multiplier and selected experts tensors.
+    """
+    if top_k != 2:
+        raise ValueError("top_k must be equal to 2")
+
+    # first expert
+
+    with torch.no_grad():
+        # Compute mask for sparsity
+        mask_logits_threshold, max_ind = scores.max(dim=-1, keepdim=True)
+        factor = scores.abs().clamp(min=mask_logits_threshold)
+        mask_logits_threshold = ((mask_logits_threshold - scores) / factor) > (2 * jitter_eps)
+
+    # Apply mask
+    masked_gates = scores.masked_fill(mask_logits_threshold, float("-inf"))
+    if training:
+        selected_experts = (
+            (
+                masked_gates
+                - torch.empty_like(masked_gates, memory_format=torch.legacy_contiguous_format).exponential_().log()
+            )
+            .max(dim=-1)[1]
+            .unsqueeze(-1)
+        )  # Gumbel sampling, more robust than the multinomial method
+    else:
+        selected_experts = max_ind
+
+    # Compute scores for gradients
+    masked_gates = torch.softmax(masked_gates, dim=-1)
+    multiplier_o = masked_gates.gather(dim=-1, index=selected_experts)
+
+    if training:
+        # Compute midpoint mask
+        max_scores, max_ind = masked_gates.max(dim=-1, keepdim=True)
+        mask_for_one = torch.logical_or(
+            selected_experts == max_ind,
+            torch.rand_like(max_scores) > 0.75,  # Heun's third-order method
+        )
+        # 1 -> 1.0 & 0 -> 1./3: lambda x: (x + 0.5) / 1.5
+        mask_for_one = torch.add(0.3333, mask_for_one, alpha=0.6667).type_as(masked_gates)
+
+        multiplier = MultiplierProcessor.apply(
+            scores,
+            multiplier_o,
+            selected_experts,
+            masked_gates,
+            mask_for_one,
+        )
+    else:
+        multiplier = multiplier_o
+
+    # Masked out first expert
+    masked_scores = torch.scatter(
+        scores,
+        -1,
+        selected_experts,
+        float("-inf"),
+    )
+    with torch.no_grad():
+        # Compute mask for sparsity
+        mask_logits_threshold, max_ind = masked_scores.max(dim=-1, keepdim=True)
+        factor = scores.abs().clamp(min=mask_logits_threshold)
+        mask_logits_threshold = ((mask_logits_threshold - scores) / factor) > (2 * jitter_eps)
+
+    # Apply mask
+    masked_gates_top2 = masked_scores.masked_fill(mask_logits_threshold, float("-inf"))
+    if training:
+        selected_experts_top2 = (
+            (
+                masked_gates_top2
+                - torch.empty_like(masked_gates_top2, memory_format=torch.legacy_contiguous_format)
+                .exponential_()
+                .log()
+            )
+            .max(dim=-1)[1]
+            .unsqueeze(-1)
+        )  # Gumbel sampling, more robust than the multinomial method
+    else:
+        selected_experts_top2 = max_ind
+    # Compute scores for gradients
+    masked_gates_top2 = torch.softmax(masked_gates_top2, dim=-1)
+    multiplier_top2_o = masked_gates_top2.gather(dim=-1, index=selected_experts_top2)
+
+    if training:
+        # Compute midpoint mask
+        max_scores, max_ind = masked_gates_top2.max(dim=-1, keepdim=True)
+        mask_for_one_top2 = torch.logical_or(
+            selected_experts_top2 == max_ind,
+            torch.rand_like(max_scores).uniform_() > 0.75,  # Heun's third-order method
+        )
+        # 1 -> 1.0 & 0 -> 1./3: lambda x: (x + 0.5) / 1.5
+        mask_for_one_top2 = torch.add(0.3333, mask_for_one_top2, alpha=0.6667).type_as(masked_gates_top2)
+
+        multiplier_top2 = MultiplierProcessor.apply(
+            scores,
+            multiplier_top2_o,
+            selected_experts_top2,
+            masked_gates_top2,
+            mask_for_one_top2,
+        )
+    else:
+        multiplier_top2 = multiplier_top2_o
+
+    multiplier = torch.concat((multiplier, multiplier_top2), dim=-1)
+    selected_experts = torch.concat((selected_experts, selected_experts_top2), dim=-1)
+
+    return (
+        multiplier,
+        selected_experts,
+    )
+
+# Copied from transformers.models.mixtral.modeling_mixtral.MixtralBlockSparseTop2MLP with Mixtral->Phimoe
+# fxl: one instance -- an expert?  and it's Gated MLP (?
+class PhimoeBlockSparseTop2MLP(nn.Module):
+    def __init__(self, config: PhimoeConfig):
         super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
+        self.ffn_dim = config.intermediate_size
+        self.hidden_dim = config.hidden_size
 
-        if MLP_UP_SPLIT > 1:
-            self.gate_projs = nn.ModuleList([
-                nn.Conv2d(
-                    self.hidden_size,
-                    self.intermediate_size // MLP_UP_SPLIT,
-                    kernel_size=1,
-                    bias=getattr(config, 'mlp_bias', False),
-                    dtype=MODEL_DTYPE
-                )
-                for _ in range(MLP_UP_SPLIT)
-            ])
-            self.up_projs = nn.ModuleList([
-                nn.Conv2d(
-                    self.hidden_size,
-                    self.intermediate_size // MLP_UP_SPLIT,
-                    kernel_size=1,
-                    bias=getattr(config, 'mlp_bias', False),
-                    dtype=MODEL_DTYPE
-                )
-                for _ in range(MLP_UP_SPLIT)
-            ])
-        else:
-            self.gate_proj = nn.Conv2d(self.hidden_size, self.intermediate_size, kernel_size=1, bias=getattr(config, 'mlp_bias', False), dtype=MODEL_DTYPE)
-            self.up_proj = nn.Conv2d(self.hidden_size, self.intermediate_size, kernel_size=1, bias=getattr(config, 'mlp_bias', False), dtype=MODEL_DTYPE)
+        self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)   # fxl: up proj
+        self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False)  # fxl: down proj
+        self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)  # learned gate
 
-        if MLP_DOWN_SPLIT > 1:
-            self.down_projs = nn.ModuleList([
-                nn.Conv2d(
-                    self.intermediate_size,
-                    self.hidden_size // MLP_DOWN_SPLIT,
-                    kernel_size=1,
-                    bias=getattr(config, 'mlp_bias', False),
-                    dtype=MODEL_DTYPE
-                )
-                for _ in range(MLP_DOWN_SPLIT)
-            ])
-        else:
-            self.down_proj = nn.Conv2d(self.intermediate_size, self.hidden_size, kernel_size=1, bias=getattr(config, 'mlp_bias', False), dtype=MODEL_DTYPE)
+        self.act_fn = ACT2FN[config.hidden_act]
 
-        self.act_fn = ACT2FN.get(config.hidden_act, F.silu)
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1).unsqueeze(2)  # Ensure x has shape [bsz, hidden_size, 1, seq_len]
-
-        if MLP_UP_SPLIT > 1:
-            gate_outputs = [gate_proj(x) for gate_proj in self.gate_projs]
-            up_outputs = [up_proj(x) for up_proj in self.up_projs]
-            
-            a = torch.cat(gate_outputs, dim=1)
-            b = torch.cat(up_outputs, dim=1)
-        else:
-            a = self.gate_proj(x)
-            b = self.up_proj(x)
-
-        c = self.act_fn(a)
-        d = c * b
-
-        if MLP_DOWN_SPLIT > 1:
-            e_splits = [down_proj(d) for down_proj in self.down_projs]
-            e = torch.cat(e_splits, dim=1)
-        else:
-            e = self.down_proj(d)
-
-        return e.squeeze(2).permute(0, 2, 1)  # Final output shape: [bsz, seq_len, hidden_size]
-
-
+    def forward(self, hidden_states):
+        # fxl: below "*" is elementwise gating
+        current_hidden_states = self.act_fn(self.w1(hidden_states)) * self.w3(hidden_states)
+        current_hidden_states = self.w2(current_hidden_states)
+        return current_hidden_states
     
-    def forward(self, x):
-        # Reshape input for Conv2D operations and ensure float16 dtype
-        x = x.to(MODEL_DTYPE).permute(0, 2, 1).unsqueeze(2)
-        
-        # Up projection with optional splitting
-        if MLP_UP_SPLIT > 1:
-            gate_outputs = [proj(x) for proj in self.gate_projs]
-            up_outputs = [proj(x) for proj in self.up_projs]
-            
-            gate_states = torch.cat(gate_outputs, dim=1)
-            up_states = torch.cat(up_outputs, dim=1)
-        else:
-            gate_states = self.gate_proj(x)
-            up_states = self.up_proj(x)
-        
-        # Apply activation function
-        gate_states = self.act_fn(gate_states)
-        hidden_states = gate_states * up_states
-        
-        # Down projection with optional splitting
-        if MLP_DOWN_SPLIT > 1:
-            outputs = [proj(hidden_states) for proj in self.down_projs]
-            hidden_states = torch.cat(outputs, dim=1)
-        else:
-            hidden_states = self.down_proj(hidden_states)
-        
-        # Reshape back to original format
-        return hidden_states.squeeze(2).permute(0, 2, 1)
+class PhimoeSparseMoeBlock(nn.Module):
+    """
+    This implementation is
+    strictly equivalent to standard MoE with full capacity (no
+    dropped tokens). It's faster since it formulates MoE operations
+    in terms of block-sparse operations to accommodate imbalanced
+    assignments of tokens to experts, whereas standard MoE either
+    (1) drop tokens at the cost of reduced performance or (2) set
+    capacity factor to number of experts and thus waste computation
+    and memory on padding.
+    """
 
-class LlamaAttention(nn.Module):
-    """Attention mechanism optimized for Apple Neural Engine."""
-    
+    """ fxl notes on above: 
+    - When some experts are overloaded and others are underloaded, GPU utilization drops
+    - it only computes outputs for the tokens actually routed to each expert
+    - block-sparse execution: chunks of tokens for each expert are handled independently, and only if needed
+    (use loops, see below)    
+    (2) above means each token is routed to all experts?
+    """
+
     def __init__(self, config):
         super().__init__()
+        self.hidden_dim = config.hidden_size
+        self.ffn_dim = config.intermediate_size
+        self.num_experts = config.num_local_experts
+        self.top_k = config.num_experts_per_tok
+        # gating         fxl: router
+        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
+
+        self.experts = nn.ModuleList([PhimoeBlockSparseTop2MLP(config) for _ in range(self.num_experts)])
+
+        # Jitter parameters
+        self.router_jitter_noise = config.router_jitter_noise
+        self.input_jitter_noise = config.input_jitter_noise
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """ """
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        if self.training and self.input_jitter_noise > 0:
+            hidden_states *= torch.empty_like(hidden_states).uniform_(
+                1.0 - self.input_jitter_noise, 1.0 + self.input_jitter_noise
+            )
+        hidden_states = hidden_states.view(-1, hidden_dim)    # fxl: expand X to something liek (batch_size * seq_len, hidden_dim)
+        router_logits = self.gate(hidden_states)
+
+        routing_weights, selected_experts = sparsemixer(
+            router_logits,
+            jitter_eps=self.router_jitter_noise,
+            training=self.training,
+        )
+
+        final_hidden_states = torch.zeros(
+            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
+        )
+
+        # One hot encode the selected experts to create an expert mask
+        # this will be used to easily index which expert is going to be sollicitated
+        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+
+        # Loop over all available experts in the model and perform the computation on each expert
+        #   fxl: allow each expert to have different numbers of tokens
+        #   fxl: XXX loop below cannot be traced, need better way; also, may split wrt MLP_UP_SPLIT MLP_DOWN_SPLIT 
+        #           cf LlamaMLP
+        for expert_idx in range(self.num_experts):
+            expert_layer = self.experts[expert_idx]
+            idx, top_x = torch.where(expert_mask[expert_idx])
+            # fxl: top_x: the index of the tokens that are routed to the current expert
+
+            if top_x.shape[0] == 0:
+                continue
+
+            # Index the correct hidden states and compute the expert hidden state for
+            # the current expert. We need to make sure to multiply the output hidden
+            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
+            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
+            current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
+
+            # However `index_add_` only support torch tensors for indexing so we'll use
+            # the `top_x` tensor here.
+            #  fxl: "For each token index in top_x, add the corresponding row from current_hidden_states into final_hidden_states at that same index — in place"
+            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+        return final_hidden_states, router_logits
+
+
+# cf: src/transformers/models/phimoe/modeling_phimoe.py     PhimoeAttention
+class PhimoeAttention(nn.Module):
+    """Attention mechanism optimized for Apple Neural Engine."""
+    
+    """
+    Multi-headed attention from 'Attention Is All You Need' paper. Modified to use sliding window attention: Longformer
+    and "Generating Long Sequences with Sparse Transformers".
+    """
+    def __init__(self, config, layer_idx: Optional[int] = None):
+        super().__init__()
         self.config = config
+        self.layer_idx = layer_idx
+        if layer_idx is None:   # fxl why need layer indx?
+            print(
+                f"Instantiating {self.__class__.__name__} without passing a `layer_idx` is not recommended and will "
+                "lead to errors during the forward call if caching is used. Please make sure to provide a `layer_idx` "
+                "when creating this class."
+            )
+
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
+        # fxl: below not in use? 
+        # self.rope_theta = config.rope_theta
+        # self.is_causal = True
+        # self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                            f" and `num_heads`: {self.num_heads}).")
 
-        self.q_proj = nn.Conv2d(self.hidden_size, self.num_heads * self.head_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE).to(TEST_DEVICE)
-        self.k_proj = nn.Conv2d(self.hidden_size, self.num_key_value_heads * self.head_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE).to(TEST_DEVICE)
-        self.v_proj = nn.Conv2d(self.hidden_size, self.num_key_value_heads * self.head_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE).to(TEST_DEVICE)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False, dtype=MODEL_DTYPE).to(TEST_DEVICE)
+        # below, projection using conv2d... w optional bias (=True
+        self.q_proj = nn.Conv2d(self.hidden_size, self.num_heads * self.head_dim, kernel_size=1, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
+        self.k_proj = nn.Conv2d(self.hidden_size, self.num_key_value_heads * self.head_dim, kernel_size=1, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
+        self.v_proj = nn.Conv2d(self.hidden_size, self.num_key_value_heads * self.head_dim, kernel_size=1, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
         
-        self.rotary_emb = LlamaRotaryEmbedding(config)
-        self.scaling_factor = torch.tensor(1.0 / math.sqrt(self.head_dim), dtype=MODEL_DTYPE, device=TEST_DEVICE)
+        self.rotary_emb = PhimoeRotaryEmbedding(config)
+        # self.scaling_factor = torch.tensor(1.0 / math.sqrt(self.head_dim), dtype=MODEL_DTYPE, device=TEST_DEVICE)    # phi does not have this
 
-
+    # fxl: hidden_states embedding for 1 token (?) 
+    # # pretty much reshape to appease ANE, proj QKV & apply emb to QK    (need debugging)
     def get_new_kv_cache(self, hidden_states, current_pos, rotary_emb):
         bsz, q_len, _ = hidden_states.shape
         device = hidden_states.device
@@ -405,16 +658,19 @@ class LlamaAttention(nn.Module):
 
         return query_states, key_states, value_states
 
+    # below: pretty much reshape to appease ANE, proj & apply emb 
+    #       also cf: PhimoeAttention.forward()
     def get_new_kv_cache_prefill(self, hidden_states, current_pos, rotary_emb, batch_size):
         """Get new key-value cache entries optimized for prefilling with batched tokens."""
         _, batch, _ = hidden_states.shape # [1, BATCH, hidden_size=2048]
         device = hidden_states.device
         
+        # fxl: batch -- subseq length
         if ENABLE_DEBUG3:
             print(f"\nPREFILL - Input shapes:")
             print(f"  hidden_states: {hidden_states.shape}, current_pos: {current_pos}, batch: {batch}")
         
-        # Project QKV and ensure MODEL_DTYPE - optimized for batch processing
+        # Project QKV and ensure MODEL_DTYPE - optimized for batch processing       this shape for ANE? XXX understand better 
         hidden_states = hidden_states.permute(0, 2, 1).unsqueeze(2).to(MODEL_DTYPE)  # [1, hidden_size, 1, batch]
 
         # Project all tokens at once using Conv2d
@@ -427,7 +683,7 @@ class LlamaAttention(nn.Module):
         key_states = key_states.view(1, self.num_key_value_heads, self.head_dim, batch).permute(0, 1, 3, 2)  # [1, num_kv_heads, batch, head_dim]
         value_states = value_states.view(1, self.num_key_value_heads, self.head_dim, batch).permute(0, 1, 3, 2)  # [1, num_kv_heads, batch, head_dim]
 
-        # Get rotary embeddings for all positions at once
+        # Get rotary embeddings for all positions at once       fxl: so rotary_emb already cut into "batch"?
         cos, sin = rotary_emb
         cos = cos.permute(0, 2, 1, 3)  # [1, 1, batch, head_dim]
         sin = sin.permute(0, 2, 1, 3)  # [1, 1, batch, head_dim]
@@ -437,12 +693,12 @@ class LlamaAttention(nn.Module):
 
         return query_states.to(MODEL_DTYPE), key_states.to(MODEL_DTYPE), value_states.to(MODEL_DTYPE)
 
-
+    # fxl: below not in use??? (instead forward_regular, forward_prefill)
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.FloatTensor,
-        position_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,      # e.g. [0, 1, 2, 3, 4...]
         current_pos: int,
         IN_PREFILL: bool = False,
         **kwargs
@@ -463,10 +719,10 @@ class LlamaAttention(nn.Module):
         assert attention_mask is not None, "attention_mask must be provided"
 
         # Generate position IDs if not provided
-        # Get rotary embeddings
+        # Get rotary embeddings      return precomputed cos/sin values -- XXX check this also trace llama code, seq_len current_pos ignored? why ??
         cos, sin = self.rotary_emb(hidden_states, seq_len=seq_length, current_pos=current_pos)
         
-        # Get KV states based on mode
+        # Get KV states based on mode  (fxl: proj and apply rope..
         if IN_PREFILL:
             query_states, key_states, value_states = self.get_new_kv_cache_prefill(
                 hidden_states, current_pos, (cos, sin), batch_size=seq_length
@@ -538,6 +794,7 @@ class LlamaAttention(nn.Module):
         
         return output
 
+    # fxl: below quite stanard softmax?? maybe for ease of tracing?  "Optimized softmax for batch_size=1" but also used in prefil
     def ANE_softmax(self, x, dim=-1):
         #return F.softmax(x, dim=dim)
         
@@ -546,8 +803,9 @@ class LlamaAttention(nn.Module):
         exp_x = torch.exp(x)
         softmax_output = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
         return softmax_output
-
         
+    # fxl: an efficeint to multiply q/k states with (precomputed) cos/sin values ...?
+    # dindt check in detail, assume correct
     def apply_rotary_pos_emb(self, q_states, k_states, cos, sin):
         """
         Applies rotary position embeddings to both q_states and k_states.
@@ -594,6 +852,7 @@ class LlamaAttention(nn.Module):
                 
         return q_rotated, k_rotated
 
+    # fxl: 1 token gen. use kvcache. Q (query_states) already projected
     def forward_regular(self, hidden_states, query_states, kv_cache_layer=None, causal_mask=None):
         """Forward pass for single token generation."""
         bsz, q_len, _ = hidden_states.shape
@@ -612,7 +871,8 @@ class LlamaAttention(nn.Module):
         # Compute attention using optimized path for batch_size=1
         
         # Compute attention scores directly without einsum
-        attn_weights = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.scaling_factor
+        # attn_weights = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.scaling_factor
+        attn_weights = torch.matmul(query_states, key_states.transpose(-1, -2)) / math.sqrt(self.head_dim)    # cf modeling_phimoe.py forward()
         
         if causal_mask is not None:
             attn_weights = attn_weights + causal_mask[:, :, :self.config.context_length]
@@ -624,7 +884,7 @@ class LlamaAttention(nn.Module):
         # Optimized softmax for batch_size=1
         attn_weights = self.ANE_softmax(attn_weights, dim=-1)
         
-        # Compute attention output directly without einsum
+        # Compute attention output directly without einsum  fxl: XXX means what?? 
         attn_output = torch.matmul(attn_weights, value_states)
         
         # Reshape before projecting: [1, heads, q_len, head_dim] -> [1, q_len, heads*head_dim]
@@ -638,6 +898,8 @@ class LlamaAttention(nn.Module):
         
         return attn_output
 
+    # fxl: prefill gen, use kvcache. Q (query_states) already projected.  
+    #       similar to above, but use einsum for attn_weights and attn_output (sgemm... why??
     def forward_prefill(self, hidden_states, query_states, kv_cache_layer=None, causal_mask=None):
         """Forward pass for prefill mode"""
         bsz, q_len, _ = hidden_states.shape
@@ -662,9 +924,10 @@ class LlamaAttention(nn.Module):
             print("[forward_prefill.1] key_states.shape=", key_states.shape)
             print("[forward_prefill.1] value_states.shape=", value_states.shape)
         
-        # Compute scaled dot-product attention
-        attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) * self.scaling_factor
-        
+        # Compute scaled dot-product attention      fxl: understadn better: why use einsum rather than matmul?
+        # attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) * self.scaling_factor
+        attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) / math.sqrt(self.head_dim)    # cf modeling_phimoe.py forward()
+
         if causal_mask is not None:
             if ENABLE_DEBUG3:  
                 print("[forward_prefill.2] causal_mask.shape=", causal_mask.shape)
@@ -697,25 +960,28 @@ class LlamaAttention(nn.Module):
         x = x.view(1, -1, x.size(-2), x.size(-1))  # Shape: (1, num_kv_heads * n_rep, seq_len, head_dim)
         return x
 
-class LlamaDecoderLayer(nn.Module):
-    """Transformer decoder layer for LLaMA."""
+class PhimoeDecoderLayer(nn.Module):
+    """Transformer decoder layer for Phi."""
 
     def __init__(self, config, layer_idx: int, use_ane_norm=False):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.layer_idx = layer_idx
-        self.self_attn = LlamaAttention(config)
-        self.mlp = LlamaMLP(config)
+        self.layer_idx = layer_idx      # why needed?
+        self.self_attn = PhimoeAttention(config, layer_idx)
+        self.mlp = PhimoeSparseMoeBlock(config)
         
         # Use ANE_NORM if enabled, otherwise use RMSNorm
-        if use_ane_norm:
+        if use_ane_norm:        # not implemented ... 
             self.input_layernorm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
             self.post_attention_layernorm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
-        else:
-            self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        else:  # use standard rmsnorm (not llamaRMSnorm) - fxl
+            self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
+            self.post_attention_layernorm = nn.LayerNorm(
+                config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
 
-    def forward(self, hidden_states, attention_mask=None, position_ids=None, kv_cache_layer=None, current_pos=None, IN_PREFILL=False):
+    # fxl: TBD XXX
+    def forward(self, hidden_states, attention_mask=None, position_ids=None, 
+                    kv_cache_layer=None, current_pos=None, IN_PREFILL=False):
         # Self Attention
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -752,8 +1018,9 @@ def get_kv_cache_idx(layer_idx, num_layers, num_groups=1):
     layer_in_group_idx = layer_idx % layers_per_group
     return group_idx, layer_in_group_idx, layers_per_group
 
-class LlamaModel(BaseModel):
-    """LLaMA model implementation."""
+# fxl: XXX 
+class PhimoeModel(BaseModel):
+    """Phi Moe model implementation."""
 
     def __init__(self, config, use_ane_norm=False, model_path=None):
         super().__init__(config)
@@ -771,7 +1038,7 @@ class LlamaModel(BaseModel):
         if use_ane_norm:
             self.norm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
         else:
-            self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            self.norm = nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
             
         # Initialize KV cache with MODEL_DTYPE
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -800,13 +1067,13 @@ class LlamaModel(BaseModel):
                     torch.zeros(cache_size, dtype=MODEL_DTYPE, device=TEST_DEVICE)
                 )
 
-
     def get_rotary_embeddings_s(self, current_pos):
         """Get rotary embeddings for the current position"""
         if ENABLE_VALUES:
             print(f"\n[DEBUG] get_rotary_embeddings_s:")
             print(f"  current_pos: {current_pos}")
         
+        # fxl: all layer have same rotary embedding? 
         sin = self.layers[0].self_attn.rotary_emb.sin_cached[:, current_pos].view(1, 1, 1, -1)
         cos = self.layers[0].self_attn.rotary_emb.cos_cached[:, current_pos].view(1, 1, 1, -1)
         if ENABLE_VALUES:
@@ -868,7 +1135,7 @@ class LlamaModel(BaseModel):
             print(f"rotary_emb.shape={rotary_emb[0].shape}")
             print("[process_layer_prefill] causal_mask.shape=", causal_mask.shape)
 
-        # Get query, key and value states for prefill           fxl: this???
+        # Get query, key and value states for prefill           fxl: proj the new tokens (with rope
         query_states, key_states, value_states = layer.self_attn.get_new_kv_cache_prefill(
             normalized_states,
             current_pos,
@@ -888,12 +1155,12 @@ class LlamaModel(BaseModel):
         key_idx = layer_in_group_idx
         value_idx = layer_in_group_idx + layers_per_group
 
-        # Store the full sequence length in prefill mode
+        # Store the full sequence length in prefill mode       (fxl: append to kvcache?
         seq_length = key_states.shape[2]  # Get actual sequence length
         kv_cache[key_idx:key_idx + 1, :, current_pos:current_pos + seq_length, :] = key_states
         kv_cache[value_idx:value_idx + 1, :, current_pos:current_pos + seq_length, :] = value_states
         
-        # Get the key and value states for this layer from the merged cache
+        # Get the key and value states for this layer from the merged cache (fxl: extract past kvcache? (separate as k,v)
         key_cache = kv_cache[key_idx:key_idx + 1].squeeze(0)
         value_cache = kv_cache[value_idx:value_idx + 1].squeeze(0)
 
@@ -914,7 +1181,7 @@ class LlamaModel(BaseModel):
             post_attn = layer.post_attention_layernorm(hidden_states)
             hidden_states = hidden_states + layer.mlp(post_attn)
         else:
-            print("Skipping MLP for last layer in prefill mode")    # fxl: this???
+            print("Skipping MLP for last layer in prefill mode")
 
         if ENABLE_VALUES:
             print("BATCH------------------------------------------------------------------------------------------------- ")
@@ -950,7 +1217,7 @@ class LlamaModel(BaseModel):
             print(f"position_ids.shape={position_ids.shape}")
             print(f"rotary_emb.shape={rotary_emb[0].shape}")
 
-        # Get query, key and value states for regular processing
+        # Get query, key and value states for regular processing (fxl: project 
         query_states, key_states, value_states = layer.self_attn.get_new_kv_cache(
             normalized_states,
             current_pos,
@@ -1022,8 +1289,6 @@ class LlamaModel(BaseModel):
             #    break
         return hidden_states
 
-
-
     def forward(self, hidden_states, position_ids=None, causal_mask=None, current_pos=None,
                 start_layer=0, end_layer=None, IN_PREFILL=False):
         """
@@ -1070,7 +1335,7 @@ class LlamaModel(BaseModel):
 
         return hidden_states
 
-    #LlamaModel.forward_prefill
+    #LlamaModel.forward_prefill    fxl -- not in use??
     def forward_prefill(self, hidden_states, position_ids=None, causal_mask=None, current_pos=None, start_layer=None, end_layer=None):
         """
         Forward pass for prefilling KV cache
@@ -1116,8 +1381,7 @@ class LlamaModel(BaseModel):
 
         return hidden_states
 
-
-
+# fxl: not in use??
 def stable_l2_norm(x, eps):
     """Compute stable L2 norm optimized for ANE.
     
@@ -1141,18 +1405,18 @@ def stable_l2_norm(x, eps):
     
     return x / scaled_norm, max_val
 
-# fxl: this wraps around LlamaModel and adds lm_head embed, etc. 
-class LlamaForCausalLM(nn.Module):
-    """LLaMA model with causal language modeling head."""
+# fxl: this wraps around Phimoe Model and adds lm_head embed
+#      also responsible for loading model weights 
+class PhimoeForCausalLM(nn.Module):
+    """Phi Moe model with causal language modeling head."""
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config, use_ane_norm=False, enable_coreml=False):
         super().__init__()
         self.config = config
         self.enable_coreml = enable_coreml
-        # fxl: "the embedding layer that maps input token IDs to dense vectors" (a common convention name
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size).to(TEST_DEVICE)
-        self.model = LlamaModel(config, use_ane_norm=use_ane_norm).to(TEST_DEVICE)
+        self.model = PhimoeModel(config, use_ane_norm=use_ane_norm).to(TEST_DEVICE)
         
         # Initialize lm_head as Conv2d for ANE optimization  fxl: <--- this, interesting
         if ENABLE_CONV2D:
@@ -1289,6 +1553,7 @@ class LlamaForCausalLM(nn.Module):
                 print(f"Unexpected keys: {unexpected_keys}")
             return False
 
+    # fxl: only used for testing 
     def prefill_kv_cache(self, input_ids, position_ids, start_pos, causal_mask):
         """
         Pre-fills KV cache for a batch of tokens starting from start_pos.
@@ -1333,10 +1598,11 @@ class LlamaForCausalLM(nn.Module):
                 current_pos=start_pos
             )
 
+    # fxl: XXX handle this? -- "this model may need to switch between short and long rope, invalidating the cache in the process"
     def forward(
         self,
         input_ids: torch.LongTensor,
-        update_mask: torch.FloatTensor,
+        update_mask: torch.FloatTensor,   # fxl: not in use??
         position_ids: torch.LongTensor,
         current_pos: int,
         causal_mask: torch.Tensor,
@@ -1414,8 +1680,8 @@ class LlamaForCausalLM(nn.Module):
         
         return logits
 
-class LlamaConverter(BaseConverter):
-    """Handles LLAMA model conversion to CoreML."""
+class PhimoeConverter(BaseConverter):
+    """Handles Phimoe model conversion to CoreML."""
 
     def __init__(self, config, model_path=None, use_ane_norm=False):
         super().__init__()
@@ -1423,7 +1689,7 @@ class LlamaConverter(BaseConverter):
         self.model_path = model_path
         self.use_ane_norm = use_ane_norm
         # Initialize model with enable_coreml=True for CoreML conversion
-        self.model = LlamaForCausalLM(config, use_ane_norm=use_ane_norm, enable_coreml=True)
+        self.model = PhimoeForCausalLM(config, use_ane_norm=use_ane_norm, enable_coreml=True)
         
         if False and model_path:
             self.model.model.load_pretrained_weights(
@@ -1435,11 +1701,11 @@ class LlamaConverter(BaseConverter):
 
     def convert(self):
         self.preprocess()
-        # LLAMA model needs special handling before CoreML conversion
+        # Phimoe model needs special handling before CoreML conversion
         coreml_model = self.convert_to_coreml(self.model)
         self.postprocess()
         return coreml_model
 
     def convert_to_coreml(self, model):
-        """Convert LLAMA model using CoreMLTools."""
+        """Convert Phimoe model using CoreMLTools."""
         return ct.convert(model)  # Placeholder for actual logic

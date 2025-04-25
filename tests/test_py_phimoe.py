@@ -12,23 +12,26 @@ import os
 import numpy as np
 import time
 
+'''
+. ~/workspace-apple-silicon/myenv-python39/bin/activate
 
-#  TEST with BATCHED PREFILL
-#python -m unittest tests.test_py_llama.TestLlamaModel.test_generation_with_prefill -v 
-#
-#  TEST with SINGLE PREFILL
-#python -m unittest tests.test_py_llama.TestLlamaModel.test_generation_with_single_prefill -v
-#  MODEL_PATH is location for HF model
+ TEST with BATCHED PREFILL
+python -m unittest tests.test_py_phimoe.TestPhimoeModel.test_generation_with_prefill -v 
 
-MODEL_PATH = os.path.expanduser("../Meta-Llama-3.2-1B")
+ TEST with SINGLE PREFILL
+python -m unittest tests.test_py_phimoe.TestPhimoeModel.test_generation_with_single_prefill -v
+ MODEL_PATH is location for HF model
+'''
+
+MODEL_PATH = os.path.expanduser("~/models/Phi-3.5-MoE-instruct")
 
 # Update imports to use package imports
-from anemll.models.llama_model import (
-    LlamaConfig,
-    LlamaModel,
-    LlamaForCausalLM,
+from anemll.models.phimoe_model import (
+    PhimoeConfig,
+    PhimoeModel,
+    PhimoeForCausalLM,
     MODEL_DTYPE,
-    TEST_DEVICE,  # Import TEST_DEVICE from llama_model.py
+    TEST_DEVICE,  # Import TEST_DEVICE from phimoe_model.py
     CONTEXT_LENGTH,
     STATE_LENGTH,
     ENABLE_CONV2D,
@@ -41,6 +44,8 @@ from anemll.models.llama_model import (
 
 print(f"Using imported TEST_DEVICE: {TEST_DEVICE}")
 
+# fxl: "start" not in use???
+# fxl: create a 4D tensor (1,1,seqlen,seq_len) 
 def make_causal_mask(length, start):
     """Create a causal mask for attention to prevent tokens from attending to future positions.
     
@@ -54,6 +59,12 @@ def make_causal_mask(length, start):
     Returns:
         torch.Tensor: Causal mask of shape (1, 1, length, length) on TEST_DEVICE, where valid
                      attention positions are 0 and invalid (future) positions are -inf
+    fxl, e.g. 
+    [[[[  0, -inf, -inf, -inf],
+    [  0,   0, -inf, -inf],
+    [  0,   0,   0, -inf],
+    [  0,   0,   0,   0]]]]
+    
     """
     # Initialize the mask with -inf on correct device and dtype
     min_val = torch.finfo(MODEL_DTYPE).min
@@ -69,7 +80,7 @@ def make_causal_mask(length, start):
     return mask
 
 def initialize_tokenizer(model_path):
-    """Initialize and configure the tokenizer for the Llama model.
+    """Initialize and configure the tokenizer for the Phimoe model.
     
     This function loads the tokenizer from the specified model path and configures it with
     appropriate padding tokens and settings. It handles cases where pad tokens may not be
@@ -93,8 +104,6 @@ def initialize_tokenizer(model_path):
         tokenizer.padding_side = 'left'  
         print(f"Tokenizer new padding side: {tokenizer.padding_side}")
 
-
-
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
             tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -116,12 +125,10 @@ def initialize_tokenizer(model_path):
         print(f"Error loading tokenizer: {e}")
         return None
 
-
-
-class TestLlamaModel(unittest.TestCase):
-    """Test suite for the Llama model implementation.
+class TestPhimoeModel(unittest.TestCase):
+    """Test suite for the Phimoe model implementation.
     
-    This test suite verifies various aspects of the Llama model including:
+    This test suite verifies various aspects of the Phimoe model including:
     - Model initialization and configuration
     - Attention mechanism functionality
     - KV cache updates and management
@@ -129,8 +136,9 @@ class TestLlamaModel(unittest.TestCase):
     - Prefill mode operation
     - Integration with tokenizer
     """
+    # fxl: this runs the model, w/o tracing or coreml
 
-    # fxl: @classmlethod like static, more for factory-like behaviro
+    # fxl: @classmlethod like static, more for factory-like behaviro. produces a model instance
 
     @classmethod
     def setUpClass(cls):
@@ -138,7 +146,7 @@ class TestLlamaModel(unittest.TestCase):
         
         This method:
         1. Loads model configuration from json
-        2. Initializes the LlamaForCausalLM model
+        2. Initializes the PhimoeForCausalLM model
         3. Loads pretrained weights if available
         4. Verifies proper weight loading
         5. Sets model to evaluation mode
@@ -153,7 +161,7 @@ class TestLlamaModel(unittest.TestCase):
         config_path = os.path.join(MODEL_PATH, "config.json")
         if os.path.exists(config_path):
             print(f"Loading config from {config_path}")
-            cls.config = LlamaConfig.from_json(config_path)
+            cls.config = PhimoeConfig.from_json(config_path)
         else:
             print(f"Error: {config_path} not found, using default config")
             raise RuntimeError(f"Error: {config_path} not found, using default config")
@@ -173,9 +181,9 @@ class TestLlamaModel(unittest.TestCase):
         
         
         # Initialize model
-        cls.model = LlamaForCausalLM(cls.config, enable_coreml=False, use_ane_norm=False)
+        cls.model = PhimoeForCausalLM(cls.config, enable_coreml=False, use_ane_norm=False)
         
-        print(f"  cls.config.torch_required: {cls.config.torch_required}")
+        print(f"  cls.config.torch_required: {cls.config.torch_required}")      # <--- needed???
 
         # Load pretrained weights if available
         if os.path.exists(MODEL_PATH):
@@ -203,8 +211,6 @@ class TestLlamaModel(unittest.TestCase):
         
         cls.model.eval()
 
-
-
     def test_model_initialization(self):
         """Verify basic model initialization parameters.
         
@@ -227,6 +233,8 @@ class TestLlamaModel(unittest.TestCase):
         - Forward pass through attention layers
         - Output tensor shapes and dtypes
         - Proper device placement of tensors
+
+        fxl: cr model, run dummy inputs, check shapes
         """
         # Ensure model is in eval mode and on correct device
         self.model.eval()
@@ -238,13 +246,15 @@ class TestLlamaModel(unittest.TestCase):
         input_ids = torch.randint(0, self.config.vocab_size, (batch_size, seq_length), device=TEST_DEVICE)
         
         # Create attention inputs - ensure all tensors are on correct device
+        # "update_mask: Mask for KV cache updates"
         update_mask = torch.zeros((batch_size, 1, CONTEXT_LENGTH, 1), dtype=MODEL_DTYPE, device=TEST_DEVICE)
         position_ids = torch.tensor([0], dtype=torch.long, device=TEST_DEVICE)  # Make it 1D
         causal_mask = make_causal_mask(seq_length, 0)  # This helper function should handle device placement
         current_pos = torch.tensor([0], device=TEST_DEVICE)
         single_causal_mask = causal_mask[:, :, current_pos:current_pos + 1, :CONTEXT_LENGTH]
+        # ^^ a single row of the mask for the current position  eg [[[[  0, -inf, -inf]]]]
 
-        # Run forward pass through LlamaForCausalLM
+        # Run forward pass through PhimoeForCausalLM
         with torch.no_grad():
             output = self.model(
                 input_ids=input_ids,
@@ -256,7 +266,7 @@ class TestLlamaModel(unittest.TestCase):
             )
 
         # Check output shape and dtype
-        # For LlamaForCausalLM, output should be logits with shape [batch_size, seq_length, vocab_size]
+        # For PhimoeForCausalLM, output should be logits with shape [batch_size, seq_length, vocab_size]
         self.assertEqual(output.shape, (batch_size, seq_length, self.config.vocab_size))
         self.assertEqual(output.dtype, MODEL_DTYPE)
         self.assertEqual(str(output.device), str(TEST_DEVICE))  # Compare string representations of devices
@@ -302,7 +312,7 @@ class TestLlamaModel(unittest.TestCase):
 
         # Check cache shapes and values
         cache_name = "kv_cache_0"
-        if hasattr(self.model.model, cache_name):  # Check model.model since we're using LlamaForCausalLM
+        if hasattr(self.model.model, cache_name):  # Check model.model since we're using PhimoeForCausalLM
             cache = getattr(self.model.model, cache_name)
             expected_shape = (
                 2 * self.config.num_hidden_layers,  # 2 for key and value caches
@@ -324,7 +334,7 @@ class TestLlamaModel(unittest.TestCase):
         - Output logits shape and values
         - Proper probability distribution in output
         """
-        model = LlamaForCausalLM(self.config, enable_coreml=False)
+        model = PhimoeForCausalLM(self.config, enable_coreml=False)
         model.eval()
         
         batch_size, seq_length = 1, 10
@@ -334,6 +344,13 @@ class TestLlamaModel(unittest.TestCase):
         update_mask = torch.zeros((batch_size, 1, CONTEXT_LENGTH, 1), dtype=self.dtype)
         position_ids = torch.arange(seq_length).unsqueeze(0)
         causal_mask = torch.triu(torch.ones(1, 1, seq_length, seq_length), diagonal=1) * -1e4
+        '''
+        fxl: causal_mask is something like 
+        [[[[    0, -1e4, -1e4, -1e4],
+        [    0,     0, -1e4, -1e4],
+        [    0,     0,     0, -1e4],
+        [    0,     0,     0,     0]]]]
+        '''
         current_pos = torch.tensor([0])
 
         # Run forward pass
@@ -378,7 +395,6 @@ class TestLlamaModel(unittest.TestCase):
         # Check that values are in valid range [-1, 1]
         self.assertTrue(torch.all(cos >= -1) and torch.all(cos <= 1))
         self.assertTrue(torch.all(sin >= -1) and torch.all(sin <= 1))
-
 
 
     def test_generation_with_prefill(self):
@@ -440,7 +456,7 @@ class TestLlamaModel(unittest.TestCase):
         self.model.eval()
         self.model = self.model.to(TEST_DEVICE)
 
-        # Pad to full context length
+        # Pad to full context length   <-- fxl: for testing only? what's the point here
         print(f"\n[DEBUG] Before context padding:")
         print(f"  Current shape: {input_ids.shape}")
         print(f"  Padding to context length: {CONTEXT_LENGTH}")
@@ -476,6 +492,7 @@ class TestLlamaModel(unittest.TestCase):
         # Create full causal mask for the entire context length
         causal_mask = make_causal_mask(CONTEXT_LENGTH, 0)
         
+        # fxl: below, prefil. eahc iteration prefills a slice of input seq (len=bs
         while current_pos < tokens_to_process:
             # Calculate batch end position
             batch_end = min(current_pos + batch_size, tokens_to_process)
@@ -498,13 +515,15 @@ class TestLlamaModel(unittest.TestCase):
                     value=tokenizer.pad_token_id
                 )
             
-            # Prepare causal mask for this batch - use full batch_size
+            # Prepare causal mask for this batch - use full batch_size   
+            # XXX fxl multiple_causal_mask: a segment from causal_mask? (like each row for a token in batch
+            #     cf single_causal_mask below
             multiple_causal_mask = causal_mask[:, :, current_pos:current_pos + batch_size, :]
             
             # Create position IDs for full batch_size
             position_ids = torch.arange(current_pos, current_pos + batch_size, device=TEST_DEVICE)
             
-            # Get rotary embeddings for the full batch            
+            # Get rotary embeddings for the full batch
             # Run prefill for this batch
             with torch.no_grad():
                 self.model.prefill_kv_cache(
@@ -546,7 +565,7 @@ class TestLlamaModel(unittest.TestCase):
             # Create single token inputs
             position_ids = torch.tensor([current_pos], dtype=torch.long, device=TEST_DEVICE)
             
-            # Create single token causal mask
+            # Create single token causal mask       fxl: how would this look? one row, truncated at CONTEXT_LENGTH? original shape 1,1,len,len
             single_causal_mask = causal_mask[:, :, current_pos:current_pos + 1, :CONTEXT_LENGTH]
             
             # Create update mask for single token
@@ -573,7 +592,6 @@ class TestLlamaModel(unittest.TestCase):
             
             # Get next token
             next_token_id = torch.argmax(logits[:, -1, :], dim=-1).item()
-            
             
             # Break if we hit the EOT token
             if next_token_id == eot_token_id:
@@ -657,7 +675,7 @@ class TestLlamaModel(unittest.TestCase):
         self.model.eval()
         self.model = self.model.to(TEST_DEVICE)
 
-        input_ids = F.pad(
+        input_ids = F.pad(   # fxl: still pad input seq
             input_ids,
             (0, CONTEXT_LENGTH - prompt_length),
             value=tokenizer.pad_token_id
@@ -680,7 +698,7 @@ class TestLlamaModel(unittest.TestCase):
         # Create full causal mask once
         causal_mask = make_causal_mask(CONTEXT_LENGTH, 0)
         
-        # Process each prompt token individually
+        # Process each prompt token individually   <--- fxl: here's the diff
         for i in range(prompt_length):
             position_ids = torch.tensor([current_pos], dtype=torch.long, device=TEST_DEVICE)
             
