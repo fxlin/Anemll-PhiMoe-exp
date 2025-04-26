@@ -519,9 +519,15 @@ class PhimoeBlockSparseTop2MLP(nn.Module):
         self.ffn_dim = config.intermediate_size
         self.hidden_dim = config.hidden_size
 
-        self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: up proj
-        self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: down proj
-        self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # learned gate
+        # orig, using Linear
+        # self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: up proj
+        # self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: down proj
+        # self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # learned gate
+
+        # use conv2d... for ANE
+        self.w1 = nn.Conv2d(self.hidden_dim, self.ffn_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE)  # fxl: up proj
+        self.w2 = nn.Conv2d(self.ffn_dim, self.hidden_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE)  # fxl: down proj
+        self.w3 = nn.Conv2d(self.hidden_dim, self.ffn_dim, kernel_size=1, bias=False, dtype=MODEL_DTYPE)  # learned gate
 
         self.act_fn = ACT2FN[config.hidden_act]
 
@@ -557,8 +563,10 @@ class PhimoeSparseMoeBlock(nn.Module):
         self.ffn_dim = config.intermediate_size
         self.num_experts = config.num_local_experts
         self.top_k = config.num_experts_per_tok
+        
         # gating         fxl: router. must cast to fp16
-        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False, dtype=MODEL_DTYPE)
+        # self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False, dtype=MODEL_DTYPE)
+        self.gate = nn.Conv2d(self.hidden_dim, self.num_experts, kernel_size=1, bias=False, dtype=MODEL_DTYPE)
 
         self.experts = nn.ModuleList([PhimoeBlockSparseTop2MLP(config) for _ in range(self.num_experts)])
 
@@ -573,14 +581,19 @@ class PhimoeSparseMoeBlock(nn.Module):
             hidden_states *= torch.empty_like(hidden_states).uniform_(
                 1.0 - self.input_jitter_noise, 1.0 + self.input_jitter_noise
             )
-        hidden_states = hidden_states.view(-1, hidden_dim)    # fxl: expand X to something liek (batch_size * seq_len, hidden_dim)
+        # hidden_states = hidden_states.view(-1, hidden_dim)    # fxl: expand X to something like (batch_size * seq_len, hidden_dim)
+        hidden_states = hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1) # fxl:to appease conv2d (gate). XXX is this right?
         router_logits = self.gate(hidden_states)
+        router_logits = router_logits.view(batch_size * sequence_length, self.num_experts) # fxl: convert back 
 
         routing_weights, selected_experts = sparsemixer(
             router_logits,
             jitter_eps=self.router_jitter_noise,
             training=self.training,
         )
+        '''
+        selected_experts.shape = (bs=64,topk=2)
+        '''
 
         final_hidden_states = torch.zeros(
             (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
@@ -589,6 +602,7 @@ class PhimoeSparseMoeBlock(nn.Module):
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be sollicitated
         expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        # shape: (num_experts=16, topk=2, bs=64)  this is so called "one hot"
 
         # Loop over all available experts in the model and perform the computation on each expert
         #   fxl: allow each expert to have different numbers of tokens
@@ -1584,14 +1598,14 @@ class PhimoeForCausalLM(nn.Module):
                             reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                             base_filtered_dict[new_key] = reshaped_weight
                             print(f"Reshaped {new_key} from {v.shape} to {reshaped_weight.shape}")
-                    # MoE experts... eg 'model.layers.0.mlp.experts.0.w2.weight'
-                    elif 'mlp.experts.' in new_key and 'weight' in new_key:
+                    # MoE experts... eg 'model.layers.1.block_sparse_moe.experts.5.w1.weight'
+                    elif 'block_sparse_moe.experts.' in new_key and 'weight' in new_key:
                         reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                         base_filtered_dict[new_key] = reshaped_weight
                         print(f"Reshaped MoE weight {new_key} from {v.shape} to {reshaped_weight.shape}")
-                    # MoE router eg 'model.layers.0.mlp.gate.weight'
-                    elif "mlp.gate.weight" in new_key:
-                        reshaped_weight = v.view(v.shape[0], 1, 1, 1)
+                    # MoE router eg 'model.layers.0.block_sparse_moe.gate.weight'
+                    elif "block_sparse_moe.gate.weight" in new_key:
+                        reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                         base_filtered_dict[new_key] = reshaped_weight
                         print(f"Reshaped MoE router weight {new_key} from {v.shape} to {reshaped_weight.shape}")
                     else:
@@ -1718,7 +1732,7 @@ class PhimoeForCausalLM(nn.Module):
             hidden_states = hidden_states.permute(0, 2, 1).unsqueeze(2).to(MODEL_DTYPE)
             
             if ENABLE_VACAB_SPLIT8:
-                # Use 8-way split head
+                # Use 8-way split head   (fxl: so ANE favors smaller projection??
                 logits1 = self.lm_head8_1(hidden_states).squeeze(2).transpose(1, 2)
                 logits2 = self.lm_head8_2(hidden_states).squeeze(2).transpose(1, 2)
                 logits3 = self.lm_head8_3(hidden_states).squeeze(2).transpose(1, 2)
