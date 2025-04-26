@@ -20,6 +20,7 @@ python -m unittest tests.test_py_phimoe.TestPhimoeModel.test_generation_with_pre
 
  TEST with SINGLE PREFILL
 python -m unittest tests.test_py_phimoe.TestPhimoeModel.test_generation_with_single_prefill -v
+
  MODEL_PATH is location for HF model
 '''
 
@@ -408,7 +409,6 @@ class TestPhimoeModel(unittest.TestCase):
         5. EOT token detection and generation stopping
         6. Proper text decoding and output formatting
         """
-        breakpoint()
         # Initialize tokenizer
         tokenizer = initialize_tokenizer(MODEL_PATH)
         print(f"\n[DEBUG] Tokenizer info:")
@@ -427,7 +427,10 @@ class TestPhimoeModel(unittest.TestCase):
             if '<|eot_id|>' in token:
                 print(f"  Found EOT token ID: {token_id}")
                 eot_token_id = token_id
-        
+            elif '<|end|>' in token:        # Phi, ending one message
+                print(f"  Found EOT token ID: {token_id}")
+                eot_token_id = token_id
+
         batch_size = 64
         
         # Prepare input
@@ -650,7 +653,10 @@ class TestPhimoeModel(unittest.TestCase):
         for i, token_id in enumerate(test_ids):
             token = tokenizer.decode([token_id])
             print(f"  {i}: {token_id} -> '{token}'")
-            if '<|eot_id|>' in token:
+            if '<|eot_id|>' in token:   # llama 
+                print(f"  Found EOT token ID: {token_id}")
+                eot_token_id = token_id
+            elif '<|end|>' in token:        # Phi, ending one message
                 print(f"  Found EOT token ID: {token_id}")
                 eot_token_id = token_id
         

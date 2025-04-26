@@ -311,8 +311,11 @@ class PhimoeRotaryEmbedding(nn.Module):
         freqs = torch.outer(t, self.inv_freq)
         # freqs = torch.einsum("i,j->ij", t, self.inv_freq)  #  <--- same as above 
 
+        # fxl: NB: inv_freq are unique freqienceis, which are half of dim. eg dim=128, #inv_freq=64. 
+        #      then cos_cached/sin_cached will be of shape [1, max_pos, dim=128]
+        #  there are duplicates in cos_cached, sin_cached. 
+        #      but,  first half of cos_emb and sin_emb apply to even dimensions
         emb = torch.cat((freqs, freqs), dim=-1)
-        # breakpoint()
 
         # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc
         self.cos_cached = (emb.cos() * mscale).view(1, self.max_position_embeddings, self.dim)
@@ -516,9 +519,9 @@ class PhimoeBlockSparseTop2MLP(nn.Module):
         self.ffn_dim = config.intermediate_size
         self.hidden_dim = config.hidden_size
 
-        self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)   # fxl: up proj
-        self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False)  # fxl: down proj
-        self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)  # learned gate
+        self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: up proj
+        self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False, dtype=MODEL_DTYPE)  # fxl: down proj
+        self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False, dtype=MODEL_DTYPE)  # learned gate
 
         self.act_fn = ACT2FN[config.hidden_act]
 
@@ -554,8 +557,8 @@ class PhimoeSparseMoeBlock(nn.Module):
         self.ffn_dim = config.intermediate_size
         self.num_experts = config.num_local_experts
         self.top_k = config.num_experts_per_tok
-        # gating         fxl: router
-        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
+        # gating         fxl: router. must cast to fp16
+        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False, dtype=MODEL_DTYPE)
 
         self.experts = nn.ModuleList([PhimoeBlockSparseTop2MLP(config) for _ in range(self.num_experts)])
 
@@ -610,8 +613,8 @@ class PhimoeSparseMoeBlock(nn.Module):
             #  fxl: "For each token index in top_x, add the corresponding row from current_hidden_states into final_hidden_states at that same index — in place"
             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
-
+        # return final_hidden_states, router_logits   # we dont need router logits
+        return final_hidden_states
 
 # cf: src/transformers/models/phimoe/modeling_phimoe.py     PhimoeAttention
 class PhimoeAttention(nn.Module):
@@ -653,6 +656,9 @@ class PhimoeAttention(nn.Module):
         self.v_proj = nn.Conv2d(self.hidden_size, self.num_key_value_heads * self.head_dim, kernel_size=1, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=self.config.attention_bias, dtype=MODEL_DTYPE).to(TEST_DEVICE)
         
+        # fxl: why is this per layer? they are all the same, right? shoudlnt' they be shared???
+        #       (transformers uses a single rotary embedding for the entire model
+        #      XXX maybe change this. non trivial mem
         self.rotary_emb = PhimoeRotaryEmbedding(config)
         # self.scaling_factor = torch.tensor(1.0 / math.sqrt(self.head_dim), dtype=MODEL_DTYPE, device=TEST_DEVICE)    # phi does not have this
 
@@ -947,7 +953,8 @@ class PhimoeAttention(nn.Module):
         
         if ENABLE_DEBUG3:  
             print("[forward_prefill.0] K_layer_cache.shape=", K_layer_cache.shape)
-        
+        # fxl: eg [forward_prefill.0] K_layer_cache.shape= torch.Size([num_kv_heads=8, len=512, head_dim=128])
+
         # Repeat KV for multi-head attention
         key_states = self.repeat_kv(K_layer_cache, self.num_key_value_groups)
         value_states = self.repeat_kv(V_layer_cache, self.num_key_value_groups)
@@ -957,7 +964,13 @@ class PhimoeAttention(nn.Module):
             print("[forward_prefill.1] query_states.shape=", query_states.shape)
             print("[forward_prefill.1] key_states.shape=", key_states.shape)
             print("[forward_prefill.1] value_states.shape=", value_states.shape)
-        
+        '''
+        eg
+        [forward_prefill.1] hidden_states.shape= torch.Size([1, bs=64, 4096])
+        [forward_prefill.1] query_states.shape= torch.Size([1, #q_heads=32, 64, head_dim 128])
+        [forward_prefill.1] key_states.shape= torch.Size([1, #k_heads(repated)=32, len=512, head_dim=128])
+        [forward_prefill.1] value_states.shape= torch.Size([1, 32, 512, 128])
+        '''
         # Compute scaled dot-product attention      fxl: understadn better: why use einsum rather than matmul?
         # attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) * self.scaling_factor
         attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) / math.sqrt(self.head_dim)    # cf modeling_phimoe.py forward()
@@ -968,6 +981,11 @@ class PhimoeAttention(nn.Module):
                 print("[forward_prefill.2] attn_weights.shape=", attn_weights.shape)
             attn_weights = attn_weights + causal_mask[:, :, :self.config.context_length]
         
+        ''' eg 
+        [forward_prefill.2] causal_mask.shape= torch.Size([1, 1, bs=64, 512])
+        [forward_prefill.2] attn_weights.shape= torch.Size([1, #heads(repeated)32, bs=64, len=512])
+        '''
+
         if ENABLE_VALUES:
             print(f"[forward_prefill]  BATCH attn_weights first 10={attn_weights[0, -1, 0:10, 0:10].tolist()}")
         
@@ -1079,6 +1097,7 @@ class PhimoeModel(BaseModel):
         # Initialize KV cache with MODEL_DTYPE
         self.head_dim = config.hidden_size // config.num_attention_heads
         
+        # fxl: note the shape, lowest dim is head_dim, then len BEFORE # of heads
         if FORCE_UNIFIED_CACHE or ENABLE_UNIFIED_CACHE:
             cache_size = (
                 2 * config.num_hidden_layers,
@@ -1170,6 +1189,7 @@ class PhimoeModel(BaseModel):
             print(f"position_ids.shape={position_ids.shape}")
             print(f"rotary_emb.shape={rotary_emb[0].shape}")
             print("[process_layer_prefill] causal_mask.shape=", causal_mask.shape)
+        # e.g causal_mask.shape= torch.Size([1, 1, bs=64, len=512]) bs is the slice len. 
 
         # Get query, key and value states for prefill           fxl: proj the new tokens (with rope
         query_states, key_states, value_states = layer.self_attn.get_new_kv_cache_prefill(

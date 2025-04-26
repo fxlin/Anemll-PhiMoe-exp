@@ -1,5 +1,16 @@
 fxl  2025-04
 
+
+# for phimoe, which uses LlamaTokenizer, cf tokenizer_config.json
+"tokenizer_class": "LlamaTokenizer"
+#llama ... 
+"tokenizer_class": "PreTrainedTokenizerFast"
+
+pip install sentencepiece
+
+###################
+
+
 comments and addition of PhiMoe 3.5 model. as exp
 
 4-17-25 meta thought:
