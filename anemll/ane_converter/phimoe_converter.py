@@ -1070,7 +1070,7 @@ def main():
         print(f"  vocab_size: {config.vocab_size}")
         
         # Initialize model  (fxl: build a torch llama model out of the config
-        model = PhimoeConfig(config)
+        model = PhimoeForCausalLM(config)
         
         # Load weights
         print("\nLoading pretrained weights...")

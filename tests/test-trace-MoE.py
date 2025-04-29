@@ -4,7 +4,12 @@ import coremltools as ct
 import numpy as np
 
 '''
-by deepseek, simplified MoE
+by deepseek, 
+a simplified MoE in torch. then traced for coreml
+
+source ~/workspace-apple-silicon/myenv-python39/bin/activate
+python tests/test-trace-MoE.py
+
 '''
 class TraceablePhimoeSparseMoeBlock(nn.Module):
     """
@@ -45,7 +50,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         # Simplified top-k routing (without training noise)
         routing_weights = torch.softmax(router_logits, dim=-1)
         topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1)
-        topk_indices = topk_indices.to(torch.int32)  # not helpful
+        # topk_indices = topk_indices.to(torch.int32)  # not helpful
         
         # Normalize weights
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
@@ -58,23 +63,24 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
             dtype=hidden_states.dtype
         )
         
-        # Create expert mask
+        # Create expert mask   (fxl: per expert mask, easier for iteration below
         expert_mask = torch.zeros(
             self.num_experts,
             batch_size * sequence_length,
-            dtype=torch.int32,
+            dtype=torch.bool,       # bool is ok, uint8 triggers error
+            # dtype=torch.uint8,
             device=hidden_states.device
         )
         
-        # Set mask for tokens assigned to each expert
+        # Set mask for tokens assigned to each expert       (fxl: iterate through experts, create masks .... obviously this cannot be done on ANE...
         for expert_idx in range(self.num_experts):
-            mask = (topk_indices == expert_idx).any(dim=-1)
-            expert_mask[expert_idx] = mask
+            mask = (topk_indices == expert_idx).any(dim=-1)     # NB: topk_indices shape [batch*seq, topk], mask shape [batch*seq]
+            expert_mask[expert_idx] = mask  # .to(dtype=torch.uint8)
         
         # Process through experts
         hidden_states_flat = hidden_states.reshape(-1, hidden_dim).unsqueeze(-1)  # [batch*seq, hidden, 1]
         
-        # WILL BE UNROLL.... 
+        # WILL BE UNROLL.... by coremltools
         for expert_idx in range(self.num_experts):
             mask = expert_mask[expert_idx]
             # if not mask.any():
@@ -85,17 +91,16 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
                 topk_indices == expert_idx,
                 topk_weights,
                 torch.zeros_like(topk_weights)
-            ).sum(dim=-1)[mask]
+            ).sum(dim=-1)[mask]     # fxl: sum --> only retain the weights for this expert (?) others are 0 therfore sum will just collapse to 0
             
             # Process through expert
-            expert_out = self.experts[expert_idx](hidden_states_flat[mask]).to(dtype=hidden_states.dtype)
-            expert_out = expert_out.squeeze(-1) * expert_weights.unsqueeze(-1)
+            expert_out = self.experts[expert_idx](hidden_states_flat[mask]).to(dtype=hidden_states.dtype)     # fxl: batched mm... hidden_states_flat[mask] -- shape [batch*seq, hidden, 1]
+            expert_out = expert_out.squeeze(-1) * expert_weights.unsqueeze(-1)   # expert_out shape [batch*seq, hidden, 1]
 
-            expert_out = expert_out.to(dtype=final_hidden_states.dtype)   # works...
-
+            expert_out = expert_out.to(dtype=final_hidden_states.dtype)   # need this to work ... why??
             # print(f"[DEBUG] expert_out dtype: {expert_out.dtype}, final_hidden_states dtype: {final_hidden_states.dtype}")
 
-            # Accumulate results
+            # Accumulate results    (contribute this expert's output to the final hidden states)
             final_hidden_states[mask] += expert_out
         
         return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)

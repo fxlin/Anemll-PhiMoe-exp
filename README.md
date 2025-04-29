@@ -9,13 +9,25 @@ fxl  2025-04
 pip install sentencepiece
 
 ###################
-test phi moe conversion (focused on MoE only)
+test phi moe conversion 
 
-./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
+# embeddings   -- works
+./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
 --only 1
+
+# lm head only
+./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
+--only 2
 
 ###################
 
+to suppress the warning
+
+/Users/felixlin/workspace-apple-silicon/myenv-python39/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+
+---> downgrade urllib3
+pip install "urllib3<2"
 
 comments and addition of PhiMoe 3.5 model. as exp
 
