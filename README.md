@@ -9,6 +9,12 @@ fxl  2025-04
 pip install sentencepiece
 
 ###################
+test phi moe conversion (focused on MoE only)
+
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
+--only 1
+
+###################
 
 
 comments and addition of PhiMoe 3.5 model. as exp

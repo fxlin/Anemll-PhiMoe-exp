@@ -380,9 +380,7 @@ class PhimoeRotaryEmbedding(nn.Module):
         return rotated.to(MODEL_DTYPE)
 
 ######################################################
-# below: directly copied from transformers 
-
-
+# below:  MoE. directly copied from transformers 
 
 def sparsemixer(scores, jitter_eps, training, top_k=2):
     """
@@ -415,7 +413,8 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
 
     # Apply mask
     masked_gates = scores.masked_fill(mask_logits_threshold, float("-inf"))
-    if training:
+    # if training:
+    if False:   # fxl
         selected_experts = (
             (
                 masked_gates
@@ -431,7 +430,8 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
     masked_gates = torch.softmax(masked_gates, dim=-1)
     multiplier_o = masked_gates.gather(dim=-1, index=selected_experts)
 
-    if training:
+    # if training:
+    if False:   # fxl
         # Compute midpoint mask
         max_scores, max_ind = masked_gates.max(dim=-1, keepdim=True)
         mask_for_one = torch.logical_or(
@@ -466,7 +466,8 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
 
     # Apply mask
     masked_gates_top2 = masked_scores.masked_fill(mask_logits_threshold, float("-inf"))
-    if training:
+    # if training:
+    if False:   # fxl
         selected_experts_top2 = (
             (
                 masked_gates_top2
@@ -483,7 +484,8 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
     masked_gates_top2 = torch.softmax(masked_gates_top2, dim=-1)
     multiplier_top2_o = masked_gates_top2.gather(dim=-1, index=selected_experts_top2)
 
-    if training:
+    # if training:
+    if False:   # fxl
         # Compute midpoint mask
         max_scores, max_ind = masked_gates_top2.max(dim=-1, keepdim=True)
         mask_for_one_top2 = torch.logical_or(

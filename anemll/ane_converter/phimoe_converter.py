@@ -718,7 +718,7 @@ class PhimoeConverter(BaseConverter):
                 states=wrapper.states,
                 compute_precision=ct.precision.FLOAT16,
                 compute_units=ct.ComputeUnit.CPU_AND_NE,
-                minimum_deployment_target=ct.target.iOS18,      # fxl: does this matter? 
+                minimum_deployment_target=ct.target.iOS18,      # fxl: does this matter? (yes, some opt depends on it; cf .cursor/rules
                 convert_to="mlprogram"
             )
             
