@@ -50,10 +50,10 @@ ENABLE_VACAB_SPLIT8 = bool(1)  # Split vocab into 8 parts
 ENABLE_LOGITS2 = bool(0)    # Return 2 logits arrays
 ENABLE_COREML = bool(0)     # CoreML-specific returns
 
-# Debug flags
-ENABLE_DEBUG =  bool(1)  # General debug info
-ENABLE_DEBUG2 = bool(1)  # Detailed debug for single token generation
-ENABLE_DEBUG3 = bool(1)  # Detailed debug for prefill mode
+# Debug flags. NB some print messages will make pytorch emit ops like resolve_conj, failing coreml conversion
+ENABLE_DEBUG =  bool(0)  # General debug info
+ENABLE_DEBUG2 = bool(0)  # Detailed debug for single token generation
+ENABLE_DEBUG3 = bool(0)  # Detailed debug for prefill mode
 ENABLE_VALUES = bool(0)  # Print tensor values for debugging
 
 # XXX TBD cf transformers: src/transformers/models/phimoe/configuration_phimoe.py
@@ -317,7 +317,7 @@ class PhimoeRotaryEmbedding(nn.Module):
         #      but,  first half of cos_emb and sin_emb apply to even dimensions
         emb = torch.cat((freqs, freqs), dim=-1)
 
-        # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc
+        # Shape: [1, max_pos, head_dim] - consistent for both single token and batched    fxl: good desc, why dim0 is 1??
         self.cos_cached = (emb.cos() * mscale).view(1, self.max_position_embeddings, self.dim)
         self.sin_cached = (emb.sin() * mscale).view(1, self.max_position_embeddings, self.dim)        
 
@@ -411,7 +411,7 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
         factor = scores.abs().clamp(min=mask_logits_threshold)
         mask_logits_threshold = ((mask_logits_threshold - scores) / factor) > (2 * jitter_eps)
 
-    # Apply mask
+    # Apply mask  (fxl: why? only for training???
     masked_gates = scores.masked_fill(mask_logits_threshold, float("-inf"))
     # if training:
     if False:   # fxl
@@ -533,11 +533,23 @@ class PhimoeBlockSparseTop2MLP(nn.Module):
 
         self.act_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, hidden_states):
+    # def forward(self, hidden_states):
+    #     # fxl: -1: inferred bs, hidden_dim, H=1, W=1 for conv2d kernel size 
+    #     hidden_states = hidden_states.view(-1, self.hidden_dim, 1, 1) 
+    #     # fxl: below "*" is elementwise gating
+    #     current_hidden_states = self.act_fn(self.w1(hidden_states)) * self.w3(hidden_states)
+    #     current_hidden_states = self.w2(current_hidden_states)
+    #     return current_hidden_states
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        original_shape = hidden_states.shape
+        # fxl: -1: inferred bs, hidden_dim, H=1, W=1 for conv2d kernel size 
+        x = hidden_states.view(-1, self.hidden_dim, 1, 1)
         # fxl: below "*" is elementwise gating
-        current_hidden_states = self.act_fn(self.w1(hidden_states)) * self.w3(hidden_states)
-        current_hidden_states = self.w2(current_hidden_states)
-        return current_hidden_states
+        out = self.act_fn(self.w1(x)) * self.w3(x)
+        out = self.w2(out)
+        out = out.view(*original_shape)
+        return out
     
 class PhimoeSparseMoeBlock(nn.Module):
     """
@@ -583,9 +595,12 @@ class PhimoeSparseMoeBlock(nn.Module):
             hidden_states *= torch.empty_like(hidden_states).uniform_(
                 1.0 - self.input_jitter_noise, 1.0 + self.input_jitter_noise
             )
-        # hidden_states = hidden_states.view(-1, hidden_dim)    # fxl: expand X to something like (batch_size * seq_len, hidden_dim)
-        hidden_states = hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1) # fxl:to appease conv2d (gate). XXX is this right?
-        router_logits = self.gate(hidden_states)
+        # fxl: flatten input to something like (batch_size * seq_len, hidden_dim)
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        router_logits = self.gate(
+            # fxl:to appease conv2d (gate). XXX is this right?
+            hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1)
+        )
         router_logits = router_logits.view(batch_size * sequence_length, self.num_experts) # fxl: convert back 
 
         routing_weights, selected_experts = sparsemixer(
@@ -613,21 +628,42 @@ class PhimoeSparseMoeBlock(nn.Module):
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             idx, top_x = torch.where(expert_mask[expert_idx])
-            # fxl: top_x: the index of the tokens that are routed to the current expert
+            # fxl: return row indices and col indices in which elements of expert_mask[expert_idx] are True
+            #   idx: 0 or 1 (like rank)? top_x: the index of the tokens that routed to THIS expert (e.g. 0,2,4..
+            #    ^^^ feels the names are revsered...???
 
-            if top_x.shape[0] == 0:
-                continue
+            # fxl: .. when no tokens routed to THIS expert...
+            # remove branch for tracing. coreml should be fine even if top_x is empty?
+            # if top_x.shape[0] == 0:
+            #     continue
 
             # Index the correct hidden states and compute the expert hidden state for
             # the current expert. We need to make sure to multiply the output hidden
             # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
-            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
+            # fxl:   below hidden_states[None] adds a dummy batch dim, shape becomes (1, bs=64, hidden_dim), 
+            #           then select tokens with "top_x" as indices, 
+            #           then reshape to (bs=64, hidden_dim) for the current expert    
+            #   fxl:  NB things like "routing_weights[top_x, idx]" is using 1D tensors (top_x, idx) as indices
+            #           understood 3/5
+            #      routing_weights[top_x, idx, None] --> shape (num_routed_tokens, 1), scalar weight bdcast across hidden_dim
+            # if top_x.shape[0] != 0:
+            #     breakpoint()
+            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)  # fxl: extract hidden states for all tokens routed to the current expert
             current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
+            # current_state shape: (num_routed_tokens, hidden_dim)
+            # current_hidden_states shape: (num_routed_tokens, hidden_dim)
 
             # However `index_add_` only support torch tensors for indexing so we'll use
             # the `top_x` tensor here.
-            #  fxl: "For each token index in top_x, add the corresponding row from current_hidden_states into final_hidden_states at that same index — in place"
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+            #  fxl: accmulate hte current experts output  ... to final_hidden_states of all tokens 
+            #       "For each token index in top_x, add the corresponding row from current_hidden_states into final_hidden_states at that same index — in place"
+            # final_hidden_states.index_add_(dim=0, index=top_x, source=current_hidden_states.to(hidden_states.dtype))
+
+            # CoreML-compatible (using one_hot + matmul)
+            one_hot_mask = torch.nn.functional.one_hot(top_x, num_classes=final_hidden_states.size(0)).half()
+            contributions = torch.matmul(one_hot_mask.T, current_hidden_states)
+            final_hidden_states += contributions
+
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
         # return final_hidden_states, router_logits   # we dont need router logits
         return final_hidden_states
@@ -739,7 +775,8 @@ class PhimoeAttention(nn.Module):
         key_states = key_states.view(1, self.num_key_value_heads, self.head_dim, batch).permute(0, 1, 3, 2)  # [1, num_kv_heads, batch, head_dim]
         value_states = value_states.view(1, self.num_key_value_heads, self.head_dim, batch).permute(0, 1, 3, 2)  # [1, num_kv_heads, batch, head_dim]
 
-        # Get rotary embeddings for all positions at once       fxl: so rotary_emb already cut into "batch"?
+        # Get rotary embeddings for all positions at once       fxl: rotary_emb already cut into batch
+        #  ((.... previous shape 1, bs, 1, headdim weird. 
         cos, sin = rotary_emb
         cos = cos.permute(0, 2, 1, 3)  # [1, 1, batch, head_dim]
         sin = sin.permute(0, 2, 1, 3)  # [1, 1, batch, head_dim]
@@ -750,6 +787,7 @@ class PhimoeAttention(nn.Module):
         return query_states.to(MODEL_DTYPE), key_states.to(MODEL_DTYPE), value_states.to(MODEL_DTYPE)
 
     # fxl: below not in use??? (instead forward_regular, forward_prefill)
+    '''
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -849,6 +887,7 @@ class PhimoeAttention(nn.Module):
         print(f"  Final output shape: {output.shape}\n")
         
         return output
+    '''
 
     # fxl: below quite stanard softmax?? maybe for ease of tracing?  "Optimized softmax for batch_size=1" but also used in prefil
     def ANE_softmax(self, x, dim=-1):
@@ -876,11 +915,12 @@ class PhimoeAttention(nn.Module):
             print(f"  k_states first 5: {k_states[0,0,0,:5].tolist()}")
         
         def rotate(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+            # fxl: cos shape [1,1,bs=64,head_dim=128]
             x = x.contiguous()
             half_dim = x.shape[-1] // 2
             
-            x1 = x[..., :half_dim]
-            x2 = x[..., half_dim:]
+            x1 = x[..., :half_dim]    # fxl: 1st half of input embedding
+            x2 = x[..., half_dim:]      # fxl: 2nd half of input embedding...
             
             if ENABLE_VALUES:
                 print(f"\n[DEBUG] rotate:")
@@ -888,7 +928,7 @@ class PhimoeAttention(nn.Module):
                 print(f"  x2 first 5: {x2[0,0,0,:5].tolist()}")
             
             if cos.dim() == 4:
-                cos = cos[..., :half_dim]
+                cos = cos[..., :half_dim]    # fxl: only take the first half ? (there's redudancy?
                 sin = sin[..., :half_dim]
             else:
                 cos = cos.unsqueeze(1)[..., :half_dim]
@@ -981,9 +1021,11 @@ class PhimoeAttention(nn.Module):
             print("[forward_prefill.1] key_states.shape=", key_states.shape)
             print("[forward_prefill.1] value_states.shape=", value_states.shape)
         '''
+        fxl: NB this attends to all tokens in len (eg 512, masked) for each token in the batch (64)
+            sounds like lots of wasted computation ????
         eg
-        [forward_prefill.1] hidden_states.shape= torch.Size([1, bs=64, 4096])
-        [forward_prefill.1] query_states.shape= torch.Size([1, #q_heads=32, 64, head_dim 128])
+        [forward_prefill.1] hidden_states.shape= torch.Size([1, bs=64, dim=4096])
+        [forward_prefill.1] query_states.shape= torch.Size([1, #q_heads=32, bs=64, head_dim 128])
         [forward_prefill.1] key_states.shape= torch.Size([1, #k_heads(repated)=32, len=512, head_dim=128])
         [forward_prefill.1] value_states.shape= torch.Size([1, 32, 512, 128])
         '''
@@ -1047,7 +1089,8 @@ class PhimoeDecoderLayer(nn.Module):
             self.post_attention_layernorm = nn.LayerNorm(
                 config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
 
-    # fxl: TBD XXX used??
+    # fxl: TBD XXX used??    
+    '''
     def forward(self, hidden_states, attention_mask=None, position_ids=None, 
                     kv_cache_layer=None, current_pos=None, IN_PREFILL=False):
         assert False, "PhimoeDecoderLayer.forward() not implemented"
@@ -1079,6 +1122,7 @@ class PhimoeDecoderLayer(nn.Module):
         hidden_states = residual + hidden_states
 
         return hidden_states
+    '''
 
 def get_kv_cache_idx(layer_idx, num_layers, num_groups=1):
     """Helper function to get KV cache indices."""
@@ -1145,6 +1189,10 @@ class PhimoeModel(BaseModel):
             print(f"  current_pos: {current_pos}")
         
         # fxl: all layer have same rotary embedding? 
+        #    below indexing: suppose sin_cached has shape [1(?), max_context=128k, dim=128]
+        #      then it takes a "pos" out and reshape to 4D tensor (1,1,1,128)
+        #         first 3dims force to be 1; last dim=-1 means torch shall infer size
+        #      (1,1,1,128) is to be bdcast??
         sin = self.layers[0].self_attn.rotary_emb.sin_cached[:, current_pos].view(1, 1, 1, -1)
         cos = self.layers[0].self_attn.rotary_emb.cos_cached[:, current_pos].view(1, 1, 1, -1)
         if ENABLE_VALUES:
@@ -1160,7 +1208,7 @@ class PhimoeModel(BaseModel):
         Args:
             positions: Tensor of position indices
         Returns:
-            Tuple of (cos, sin) tensors with shape [1, seq_len, 1, head_dim]
+            Tuple of (cos, sin) tensors with shape [1, seq_len, 1, head_dim]   fxl: why this shape <<<<<???
         """
         # Get rotary embeddings from the first attention layer
         rotary_emb = self.layers[0].self_attn.rotary_emb
@@ -1170,7 +1218,7 @@ class PhimoeModel(BaseModel):
         cos = rotary_emb.cos_cached[:, positions].view(1, seq_len, 1, rotary_emb.dim)
         sin = rotary_emb.sin_cached[:, positions].view(1, seq_len, 1, rotary_emb.dim)
         
-        if ENABLE_DEBUG3:
+        if ENABLE_VALUES:
             print(f"cos shape: {cos.shape}")
             print(f"sin shape: {sin.shape}")
 
@@ -1204,6 +1252,7 @@ class PhimoeModel(BaseModel):
             print(f"position_ids={position_ids}")
             print(f"position_ids.shape={position_ids.shape}")
             print(f"rotary_emb.shape={rotary_emb[0].shape}")
+            # eg. rotary_emb.shape=torch.Size([1, len=64, 1, headdim=128])
             print("[process_layer_prefill] causal_mask.shape=", causal_mask.shape)
         # e.g causal_mask.shape= torch.Size([1, 1, bs=64, len=512]) bs is the slice len. 
 
@@ -1215,7 +1264,7 @@ class PhimoeModel(BaseModel):
             batch_size
         )
 
-        # Get group indices
+        # Get group indices   (fxl: group means layer group, as a way to partition a model
         group_idx, layer_in_group_idx, layers_per_group = get_kv_cache_idx(layer_idx, self.config.num_hidden_layers)
 
         # Get the combined KV cache for this group
@@ -1225,7 +1274,7 @@ class PhimoeModel(BaseModel):
             kv_cache = getattr(self, f"kv_cache_{group_idx}")
 
         key_idx = layer_in_group_idx
-        value_idx = layer_in_group_idx + layers_per_group
+        value_idx = layer_in_group_idx + layers_per_group       # fxl: b/c kv cache is 2x the layer size (kcache, then vcache)
 
         # Store the full sequence length in prefill mode       (fxl: append to kvcache?
         seq_length = key_states.shape[2]  # Get actual sequence length
@@ -1379,7 +1428,7 @@ class PhimoeModel(BaseModel):
             print(f"PhimoeModel.forward - hidden_states shape: {hidden_states.shape}")
 
         # Get rotary embeddings
-        if IN_PREFILL:
+        if IN_PREFILL:      # fxl: rope for a sequence of positions (will slice)
             rotary_emb = self.get_rotary_embedding_prefill(position_ids)
         else:
             rotary_emb = self.get_rotary_embeddings_s(current_pos)
@@ -1389,7 +1438,7 @@ class PhimoeModel(BaseModel):
             hidden_states, position_ids, causal_mask,
             current_pos, rotary_emb, start_layer, end_layer, IN_PREFILL=IN_PREFILL,
         )
-        if ENABLE_DEBUG2:
+        if ENABLE_VALUES:
             print(f"phimoeModel.forward - hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
 
         # Apply final normalization if this is the last block
@@ -1408,6 +1457,7 @@ class PhimoeModel(BaseModel):
         return hidden_states
 
     #LlamaModel.forward_prefill    fxl -- not in use??
+    '''
     def forward_prefill(self, hidden_states, position_ids=None, causal_mask=None, current_pos=None, start_layer=None, end_layer=None):
         """
         Forward pass for prefilling KV cache
@@ -1452,8 +1502,10 @@ class PhimoeModel(BaseModel):
                 print(f"phimoeModel.forward AFTER self.norm hidden_states last 10: {hidden_states[-1, -1, -10:].tolist()}")
 
         return hidden_states
+    '''
 
 # fxl: not in use??
+'''
 def stable_l2_norm(x, eps):
     """Compute stable L2 norm optimized for ANE.
     
@@ -1476,6 +1528,7 @@ def stable_l2_norm(x, eps):
     scaled_norm = torch.clamp(scaled_norm, min=eps)
     
     return x / scaled_norm, max_val
+'''
 
 # fxl: this wraps around Phimoe Model and adds lm_head embed
 #      also responsible for loading model weights 
@@ -1595,16 +1648,19 @@ class PhimoeForCausalLM(nn.Module):
                     if 'self_attn' in new_key and 'weight' in new_key:
                         if 'o_proj' in new_key:
                             base_filtered_dict[new_key] = v
-                            print(f"Keeping o_proj weights as 2D: {new_key} shape {v.shape}")
+                            if "layers.0" in new_key:   #only print once. 
+                                print(f"Keeping o_proj weights as 2D: {new_key} shape {v.shape}... (& more layers...")
                         else:
                             reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                             base_filtered_dict[new_key] = reshaped_weight
-                            print(f"Reshaped {new_key} from {v.shape} to {reshaped_weight.shape}")
+                            if "layers.0" in new_key:   #only print once.
+                                print(f"Reshaped {new_key} from {v.shape} to {reshaped_weight.shape}... (& more layers...")
                     # MoE experts... eg 'model.layers.1.block_sparse_moe.experts.5.w1.weight'
                     elif 'block_sparse_moe.experts.' in new_key and 'weight' in new_key:
                         reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)
                         base_filtered_dict[new_key] = reshaped_weight
-                        print(f"Reshaped MoE weight {new_key} from {v.shape} to {reshaped_weight.shape}")
+                        if "layers.0" in new_key:   #only print once. 
+                            print(f"Reshaped MoE weight {new_key} from {v.shape} to {reshaped_weight.shape}... (& more layers...")
                     # MoE router eg 'model.layers.0.block_sparse_moe.gate.weight'
                     elif "block_sparse_moe.gate.weight" in new_key:
                         reshaped_weight = v.view(v.shape[0], v.shape[1], 1, 1)

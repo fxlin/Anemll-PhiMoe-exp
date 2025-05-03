@@ -29,6 +29,15 @@ from .metadata import AddMetadata, get_anemll_version
 import argparse
 import sys
 
+###  get a pdb debugger when exception happens?  -- not working???
+# import pdb
+# def info(type, value, tb):
+#     import traceback
+#     traceback.print_exception(type, value, tb)
+#     pdb.post_mortem(tb)
+
+# sys.excepthook = info
+
 class PhimoeConverter(BaseConverter):
     """Handles Phi Moe model conversion to Apple Neural Engine format."""
 
@@ -822,6 +831,9 @@ class PhimoeConverter(BaseConverter):
                 ct.TensorType(name="output_hidden_states", dtype=np.float16)  # Shape will be inferred
             ]
             
+            # debugging --- 
+            # print(traced_model.inlined_graph)   # this is useful 
+            
             # Convert to CoreML
             mlmodel = ct.convert(
                 traced_model,
@@ -831,7 +843,8 @@ class PhimoeConverter(BaseConverter):
                 compute_precision=ct.precision.FLOAT16,
                 compute_units=ct.ComputeUnit.CPU_AND_NE,
                 minimum_deployment_target=ct.target.iOS18,
-                convert_to="mlprogram"
+                convert_to="mlprogram",
+                debug=True
             )
             
             print("Prefill mode conversion completed")

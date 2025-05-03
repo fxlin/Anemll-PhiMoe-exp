@@ -228,13 +228,13 @@ else
     echo "Skipping step 2: Converting LM Head"
 fi
 
-# Step 3: Convert FFN (Part 2)
+# Step 3: Convert transformer blocks -- decoding mode (model Part 2)
 LUT2_PARAM=""
 if [ ! -z "$LUT_PART2" ]; then
     LUT2_PARAM="--lut $LUT_PART2"
 fi
 
-if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "2" ]; then
+if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "3" ]; then
     run_step 3 "Converting FFN" "python -m anemll.ane_converter.phimoe_converter \
         --part 2 \
         $LUT2_PARAM \
@@ -248,7 +248,8 @@ else
     echo "Skipping step 3: Converting FFN"
 fi
 
-if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "2" ]; then
+# Step 4: Convert transformer blocks -- prefill mode (model Part 2)
+if [ -z "$ONLY_STEP" ] || [ "$ONLY_STEP" = "4" ]; then
     run_step 4 "Converting Prefill" "python -m anemll.ane_converter.phimoe_converter \
         --part 2_prefill \
         $LUT2_PARAM \

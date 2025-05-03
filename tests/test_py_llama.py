@@ -14,6 +14,7 @@ import time
 
 
 #  TEST with BATCHED PREFILL
+# source ~/workspace-apple-silicon/myenv-python39/bin/activate
 #python -m unittest tests.test_py_llama.TestLlamaModel.test_generation_with_prefill -v 
 #
 #  TEST with SINGLE PREFILL

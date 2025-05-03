@@ -437,7 +437,7 @@ class LlamaAttention(nn.Module):
 
         return query_states.to(MODEL_DTYPE), key_states.to(MODEL_DTYPE), value_states.to(MODEL_DTYPE)
 
-
+    # fxl: below not in use??? (instead forward_regular, forward_prefill)
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -465,7 +465,7 @@ class LlamaAttention(nn.Module):
         # Generate position IDs if not provided
         # Get rotary embeddings
         cos, sin = self.rotary_emb(hidden_states, seq_len=seq_length, current_pos=current_pos)
-        
+
         # Get KV states based on mode
         if IN_PREFILL:
             query_states, key_states, value_states = self.get_new_kv_cache_prefill(

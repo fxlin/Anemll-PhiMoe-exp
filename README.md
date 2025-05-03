@@ -1,6 +1,25 @@
 fxl  2025-04
 
 
+# to profile: 
+source ~/workspace-apple-silicon/anemll-bench/env-anemll-bench/bin/activate
+python ~/workspace-apple-silicon/anemll-bench/examples/profile_local_model-simple.py \
+--model /Users/felixlin/models/Llama-3.2-1B-coreml-batch256-fxl/llama_prefill_lut4_chunk_01of02.mlpackage
+
+
+
+# llama3 1b, ffn only, test diff parameters for ffn conversion
+# step3 = ffn conversion
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ \
+--batch 128 \
+--output ~/models/Llama-3.2-1B-coreml-batch128-fxl/ \
+--only 4
+
+./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ \
+--batch 256 \
+--output ~/models/Llama-3.2-1B-coreml-batch256-fxl/ \
+--only 4
+
 # for phimoe, which uses LlamaTokenizer, cf tokenizer_config.json
 "tokenizer_class": "LlamaTokenizer"
 #llama ... 
@@ -11,13 +30,18 @@ pip install sentencepiece
 ###################
 test phi moe conversion 
 
-# embeddings   -- works
+# step1: embeddings   -- works
 ./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
 --only 1
 
-# lm head only
+# step2: lm head only --works
 ./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
 --only 2
+
+# Step 4: Convert transformer blocks -- prefill mode (model Part 2)
+./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
+--only 4 \
+2>&1 | tee phimoe-convert.log
 
 ###################
 
@@ -59,8 +83,11 @@ git clone https://huggingface.co/anemll/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3
 ./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ 
 # llama3 1b isntruct model. convert good
 ./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B-Instruct/ --output ~/models/Llama-3.2-1B-Instruct-coreml-fxl/ 
+
 # llama3 8b isntruct model. convert good
-./anemll/utils/convert_model.sh --model ~/models/llama-3-8b-Instruct/ --output ~/models/llama-3-8b-Instruct-coreml-fxl/ 
+./anemll/utils/convert_model.sh \
+--model ~/models/llama-3-8b-Instruct/ \
+--output ~/models/llama-3-8b-Instruct-coreml-fxl/ 
 
 # llama3 8b isntruct model. long context exp. save log 
 ./anemll/utils/convert_model.sh \
@@ -71,6 +98,7 @@ git clone https://huggingface.co/anemll/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3
 # restart from FFN conversion.... 
 ./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
 --restart 3
+
 
 ./anemll/utils/convert_model.sh --model ~/models/Llama-3.2-1B/ --output ~/models/Llama-3.2-1B-coreml-fxl/ \
 --only 1

@@ -1,0 +1,164 @@
+(...load takes quite a long time ...)
+
+
+
+swift run -c release anemllcli \
+--meta ~/models/llama-3-8b-Instruct-coreml-fxl/meta.yaml \
+--prompt "List US Presidents"
+[1/1] Planning build
+Building for production...
+[1/1] Write swift-version--58304C5D6DBC2206.txt
+Build of product 'anemllcli' complete! (0.28s)
+Reading YAML from: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/meta.yaml
+YAML contents loaded successfully
+Base directory: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl
+Model prefix: llama
+Predefined paths from meta.yaml:
+  - embeddings: llama_embeddings.mlmodelc
+  - lm_head: llama_lm_head_lut6.mlmodelc
+  - ffn: llama_FFN_PF_lut4.mlmodelc
+
+Model paths (Python style):
+Raw paths before .mlmodelc:
+Embed: llama_embeddings
+LMHead: llama_lm_head_lut6
+FFN: llama_FFN_PF_lut4_chunk_01of02
+
+Full paths:
+Embed: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_embeddings.mlmodelc
+LMHead: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_lm_head_lut6.mlmodelc
+FFN: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4.mlmodelc
+Generated canonical chunk path: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+
+Initializing tokenizer...
+
+Tokenizer Debug:
+Input modelPath: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl
+Using template: deephermes
+Using modelURL: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl
+
+Files in directory:
+- llama_embeddings.mlpackage
+- llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+- llama_embeddings.mlmodelc
+- tokenizer_config.json
+- llama_FFN_PF_lut4_chunk_02of02.mlpackage
+- config.json
+- tokenizer.json
+- llama_FFN_PF_lut4_chunk_01of02.mlpackage
+- llama_prefill_lut4_chunk_02of02.mlpackage
+- llama_prefill_lut4_chunk_01of02.mlpackage
+- llama_lm_head_lut6.mlpackage
+- meta.yaml
+- llama_FFN_PF_lut4_chunk_02of02.mlmodelc
+- llama_lm_head_lut6.mlmodelc
+- llama_FFN_lut4_chunk_02of02.mlpackage
+- llama_FFN_lut4_chunk_01of02.mlpackage
+
+Checking specific files:
+config.json exists: true
+tokenizer_config.json exists: true
+tokenizer.json exists: true
+
+Attempting to load tokenizer...
+Loading tokenizer_config.json
+Found chat_template in tokenizer_config.json: {% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>
+
+'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>
+
+' }}{% endif %}
+Found EOS token in tokenizer_config.json: <|eot_id|>
+Found BOS token in tokenizer_config.json: <|begin_of_text|>
+Found PAD token in tokenizer_config.json: <|reserved_special_token_250|>
+✓ EOS token ID: 128000 for token '<|eot_id|>'
+✓ BOS token ID: 128000 for token '<|begin_of_text|>'
+✓ PAD token ID: 128000 for token '<|reserved_special_token_250|>'
+✓ Tokenizer loaded successfully!
+
+Loading models...
+
+Loading Models:
+[□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□] 0%
+Loading Embeddings Model:
+Path: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_embeddings.mlmodelc
+✓ Embeddings model loaded
+[■■■□□□□□□□□□□□□□□□□□□□□□□□□□□□] 10%
+Loading LM Head Model:
+Path: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_lm_head_lut6.mlmodelc
+
+✓ LM Head model loaded
+[■■■■■■□□□□□□□□□□□□□□□□□□□□□□□□] 20%
+Loading FFN Chunks:
+Model directory: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl
+✅ Found 2 available chunks: [1, 2]
+Loading chunk 1: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+Loading inference chunk 1: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+
+
+
+
+
+
+✅ Inference chunk 1 loaded
+[■■■■■■■■■■■■□□□□□□□□□□□□□□□□□□] 40%Loading prefill chunk 1: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_01of02.mlmodelc
+✅ Prefill chunk 1 loaded
+[■■■■■■■■■■■■■■■■■■□□□□□□□□□□□□] 60%Loading chunk 2: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_02of02.mlmodelc
+Loading inference chunk 2: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_02of02.mlmodelc
+✅ Inference chunk 2 loaded
+[■■■■■■■■■■■■■■■■■■■■■■■■□□□□□□] 80%Loading prefill chunk 2: /Users/felixlin/models/llama-3-8b-Instruct-coreml-fxl/llama_FFN_PF_lut4_chunk_02of02.mlmodelc
+✅ Prefill chunk 2 loaded
+[■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■] 100%✅ Successfully loaded all 2 FFN chunks
+[■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■] 100%
+✓ Models loaded successfully in 171.45s
+InferenceManager initialized with v110=false
+
+Processing prompt: "List US Presidents"
+Assistant: Here is a list of all 45 Presidents of the United States in chronological order:
+
+1. George Washington (1789-1797)
+2. John Adams (1797-1801)
+3. Thomas Jefferson (1801-1809)
+4. James Madison (1809-1817)
+5. James Monroe (1817-1825)
+6. John Quincy Adams (1825-1829)
+7. Andrew Jackson (1829-1837)
+8. Martin Van Buren (1837-1841)
+9. William Henry Harrison (1841-1841)
+10. John Tyler (1841-1845)
+11. James K. Polk (1845-1849)
+12. Zachary Taylor (1849-1850)
+13. Millard Fillmore (1850-1853)
+14. Franklin Pierce (1853-1857)
+15. James Buchanan (1857-1861)
+16. Abraham Lincoln (1861-1865)
+17. Andrew Johnson (1865-1869)
+18. Ulysses S. Grant (1869-1877)
+19. Rutherford B. Hayes (1877-1881)
+20. James A. Garfield (1881-1881)
+21. Chester A. Arthur (1881-1885)
+22. Grover Cleveland (1885-1897)
+23. Benjamin Harrison (1893-1897)
+24. William McKinley (1897-1901)
+25. Theodore Roosevelt (1901-1909)
+26. William Howard Taft (1909-1913)
+27. Woodrow Wilson (1913-1921)
+28. Warren G. Harding (1921-1923)
+29. Calvin Coolidge (1923-1929)
+30. Herbert Hoover (1929-1933)
+31. Franklin D. Roosevelt (1933-1945)
+32. Harry S. Truman (1945-1953)
+33. Dwight D. Eisenhower (1953-1961)
+34. John F. Kennedy (1961-1963)
+35. Lyndon B. Johnson (1963-1969)
+36. Richard Nixon (1969-1974)
+37. Gerald R. Ford (1974-1977)
+38. Jimmy Carter (1977-1981)
+39. Ronald Reagan (1981-1989)
+40. George H.W. Bush (1989-1993)
+41. Bill Clinton (1993
+
+12.2 t/s, TTFT: 174.0ms (74.7 t/s), 512 tokens [Stop reason: max_tokens]
+
+
+% cf: https://github.com/ggml-org/llama.cpp/discussions/4167
+2-3x slower than gpu? 

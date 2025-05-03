@@ -314,7 +314,7 @@ def load_models(args,metadata):
             for chunk_path in chunk_paths:
                 print(f"\nLoading FFN+PREFILL chunk: {Path(chunk_path).name}")
                 try:
-                    # For chunked models, we need both infer and prefill functions
+                    # For chunked models, we need both infer and prefill functions (fxl: multifunction model...
                     ffn_models.append({
                         'infer': load_model(chunk_path, function_name='infer'),
                         'prefill': load_model(chunk_path, function_name='prefill')
@@ -403,7 +403,7 @@ def initialize_causal_mask(context_length):
     return causal_mask
 
 # fxl: this.   slice a input seq to default subseq (called 'batch' = 64, funny
-#       also: "Every new chunk can attend back to all prior tokens" (chatgpt XXX undestadn better)
+#       also: "Every new chunk can attend back to all prior tokens" (b/c of stateful model)
 def run_prefill(embed_model, ffn_models, input_ids, context_pos, context_length, batch_size=64, state=None, causal_mask=None):
     """Run prefill on the input sequence."""
     # Use provided causal mask or create one if not provided
