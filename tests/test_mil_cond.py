@@ -59,7 +59,9 @@ def conditional_matmul_model(X):
     
     return output
 
+# conditional_matmul_model -- type: <class 'coremltools.converters.mil.mil.program.Program'>
 print(conditional_matmul_model)
+
 '''
 main[CoreML8](%X: (1, 1024, fp16)(Tensor)) {
   block0() {

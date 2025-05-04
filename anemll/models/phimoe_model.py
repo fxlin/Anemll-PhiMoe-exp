@@ -382,6 +382,7 @@ class PhimoeRotaryEmbedding(nn.Module):
 ######################################################
 # below:  MoE. directly copied from transformers 
 
+# orig design, see comments below; overkill? unfriendly to coreml
 def sparsemixer(scores, jitter_eps, training, top_k=2):
     """
     Sparse mixer function to select top-k experts and compute multipliers.
@@ -399,6 +400,14 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Multiplier and selected experts tensors.
+
+    fxl: 
+    - The top-1 and top-2 experts are not selected from a single top-k operation
+    - Instead, the second expert is selected by masking the first and repeating the top-1 selection logic
+
+    pros: completely masking out very low-scoring experts --- avoid noise; also compute gradients on 
+        sufficently ranked, but unselected experts (for training) 
+    XXX can check ggml MoE code
     """
     if top_k != 2:
         raise ValueError("top_k must be equal to 2")
@@ -407,11 +416,13 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
 
     with torch.no_grad():
         # Compute mask for sparsity
+        #    fxl: determine which logits are too far from the max, thus set to -inf to enforce sparsity 
+        #           before softmax 
         mask_logits_threshold, max_ind = scores.max(dim=-1, keepdim=True)
         factor = scores.abs().clamp(min=mask_logits_threshold)
         mask_logits_threshold = ((mask_logits_threshold - scores) / factor) > (2 * jitter_eps)
 
-    # Apply mask  (fxl: why? only for training???
+    # Apply mask  (fxl: set "unquialifed" experts to -inf. 0 prob in softmax 
     masked_gates = scores.masked_fill(mask_logits_threshold, float("-inf"))
     # if training:
     if False:   # fxl
@@ -424,9 +435,9 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
             .unsqueeze(-1)
         )  # Gumbel sampling, more robust than the multinomial method
     else:
-        selected_experts = max_ind
+        selected_experts = max_ind  # fxl: top1 
 
-    # Compute scores for gradients
+    # Compute scores for gradients  fxl: softmax once; fwd: only get top1's "multiplier"
     masked_gates = torch.softmax(masked_gates, dim=-1)
     multiplier_o = masked_gates.gather(dim=-1, index=selected_experts)
 
@@ -451,7 +462,7 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
     else:
         multiplier = multiplier_o
 
-    # Masked out first expert
+    # Masked out first expert  (below computes 2nd expert)
     masked_scores = torch.scatter(
         scores,
         -1,
@@ -464,7 +475,7 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
         factor = scores.abs().clamp(min=mask_logits_threshold)
         mask_logits_threshold = ((mask_logits_threshold - scores) / factor) > (2 * jitter_eps)
 
-    # Apply mask
+    # Apply mask (fxl: keep 2nd & other "qualified" experts)
     masked_gates_top2 = masked_scores.masked_fill(mask_logits_threshold, float("-inf"))
     # if training:
     if False:   # fxl
@@ -505,13 +516,23 @@ def sparsemixer(scores, jitter_eps, training, top_k=2):
     else:
         multiplier_top2 = multiplier_top2_o
 
+    # fxl: combine the 2nd expert with the first one (are multipliers normalized? no?
     multiplier = torch.concat((multiplier, multiplier_top2), dim=-1)
     selected_experts = torch.concat((selected_experts, selected_experts_top2), dim=-1)
 
+    # fxl: "multiplier" (for top1,2) does not have to add to 1??
     return (
         multiplier,
         selected_experts,
     )
+
+# v1, simplified. geet rid of training computation (jitter, mask, etc)
+#    just simply topk, with softmax as multiplier
+def sparsemixer_simple(scores, top_k=2):
+    
+    top2_vals, top2_inds = scores.topk(top_k, dim=-1)
+    top2_weights = torch.softmax(top2_vals, dim=-1)
+    return (top2_weights, top2_inds)
 
 # Copied from transformers.models.mixtral.modeling_mixtral.MixtralBlockSparseTop2MLP with Mixtral->Phimoe
 # fxl: one instance -- an expert?  and it's Gated MLP (?
@@ -598,12 +619,13 @@ class PhimoeSparseMoeBlock(nn.Module):
         # fxl: flatten input to something like (batch_size * seq_len, hidden_dim)
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(
-            # fxl:to appease conv2d (gate). XXX is this right?
+            # fxl:to appease conv2d (gate)
             hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1)
         )
         router_logits = router_logits.view(batch_size * sequence_length, self.num_experts) # fxl: convert back 
 
-        routing_weights, selected_experts = sparsemixer(
+        # routing_weights, selected_experts = sparsemixer(
+        routing_weights, selected_experts = sparsemixer_simple(
             router_logits,
             jitter_eps=self.router_jitter_noise,
             training=self.training,

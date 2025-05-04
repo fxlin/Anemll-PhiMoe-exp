@@ -1,0 +1,254 @@
+#phimoe-model-dump.log
+
+(Pdb) print(traced_model.model)
+PhimoeForCausalLM(
+  original_name=PhimoeForCausalLM
+  (embed_tokens): Embedding(original_name=Embedding)
+  (model): PhimoeModel(
+    original_name=PhimoeModel
+    (layers): ModuleList(
+      original_name=ModuleList
+      (0): PhimoeDecoderLayer(
+        original_name=PhimoeDecoderLayer
+        (self_attn): PhimoeAttention(
+          original_name=PhimoeAttention
+          (q_proj): Conv2d(original_name=Conv2d)
+          (k_proj): Conv2d(original_name=Conv2d)
+          (v_proj): Conv2d(original_name=Conv2d)
+          (o_proj): Linear(original_name=Linear)
+          (rotary_emb): PhimoeRotaryEmbedding(original_name=PhimoeRotaryEmbedding)
+        )
+        (block_sparse_moe): PhimoeSparseMoeBlock(
+          original_name=PhimoeSparseMoeBlock
+          (gate): Conv2d(original_name=Conv2d)
+          (experts): ModuleList(
+            original_name=ModuleList
+            (0): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (1): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (2): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (3): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (4): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (5): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (6): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (7): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (8): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (9): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (10): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (11): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (12): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (13): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (14): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (15): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+          )
+        )
+        (input_layernorm): LayerNorm(original_name=LayerNorm)
+        (post_attention_layernorm): LayerNorm(original_name=LayerNorm)
+      )
+      (1): PhimoeDecoderLayer(
+        original_name=PhimoeDecoderLayer
+        (self_attn): PhimoeAttention(
+          original_name=PhimoeAttention
+          (q_proj): Conv2d(original_name=Conv2d)
+          (k_proj): Conv2d(original_name=Conv2d)
+          (v_proj): Conv2d(original_name=Conv2d)
+          (o_proj): Linear(original_name=Linear)
+          (rotary_emb): PhimoeRotaryEmbedding(original_name=PhimoeRotaryEmbedding)
+        )
+        (block_sparse_moe): PhimoeSparseMoeBlock(
+          original_name=PhimoeSparseMoeBlock
+          (gate): Conv2d(original_name=Conv2d)
+          (experts): ModuleList(
+            original_name=ModuleList
+            (0): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (1): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (2): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (3): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (4): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (5): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (6): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (7): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (8): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (9): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (10): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (11): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (12): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (13): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (14): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+            (15): PhimoeBlockSparseTop2MLP(
+              original_name=PhimoeBlockSparseTop2MLP
+              (w1): Conv2d(original_name=Conv2d)
+              (w2): Conv2d(original_name=Conv2d)
+              (w3): Conv2d(original_name=Conv2d)
+            )
+          )
+        )
+        (input_layernorm): LayerNorm(original_name=LayerNorm)
+        (post_attention_layernorm): LayerNorm(original_name=LayerNorm)
+      )
+    )
+    (norm): LayerNorm(original_name=LayerNorm)
+  )
+  (lm_head8_1): Conv2d(original_name=Conv2d)
+  (lm_head8_2): Conv2d(original_name=Conv2d)
+  (lm_head8_3): Conv2d(original_name=Conv2d)
+  (lm_head8_4): Conv2d(original_name=Conv2d)
+  (lm_head8_5): Conv2d(original_name=Conv2d)
+  (lm_head8_6): Conv2d(original_name=Conv2d)
+  (lm_head8_7): Conv2d(original_name=Conv2d)
+  (lm_head8_8): Conv2d(original_name=Conv2d)
+)

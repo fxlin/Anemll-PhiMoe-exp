@@ -44,7 +44,6 @@ print_usage() {
     echo "  --prefix        Prefix for model names (default: phimoe)"
     echo "  --chunk         Number of chunks to split FFN/prefill (default: 2)"
     echo "  --skip-check    Skip the dependency check step"
-    echo "  --skip-check    Skip the dependency check step"
     exit 1
 }
 
@@ -295,9 +294,8 @@ fi
 if [ "$MODEL_PATH" != "$OUTPUT_DIR" ]; then
     MODEL_NAME=$(basename "$MODEL_PATH")
     run_step 7 "Copying tokenizer files and creating meta.yaml" "
-        # Copy tokenizer files if they exist
-        (cp \"$MODEL_PATH/tokenizer.json\" \"$OUTPUT_DIR/\" || true) && \
-        (cp \"$MODEL_PATH/tokenizer_config.json\" \"$OUTPUT_DIR/\" || true) && \
+        # Copy tokenizer files if they exist (copy all files... inc tokenizer.model..
+        (cp \"$MODEL_PATH/tokenizer*\" \"$OUTPUT_DIR/\" || true) && \
         
         # Create config.json if it doesn't exist
         if [ ! -f \"$OUTPUT_DIR/config.json\" ]; then

@@ -88,7 +88,8 @@ class PhimoeConverter(BaseConverter):
             lm_head_model = self.convert_lm_head(self.model, lut_bits=self.lut_bits)
             return [embeddings_model, transformer_model, lm_head_model]
         
-        self.postprocess(num_workers=None)
+        # self.postprocess(num_workers=None)    # fxl: quant the whole model if we are convereting the whole model??
+        self.postprocess(num_workers=8)   # fxl: why not this??
 
     def GetTransformerStates(model, part=None, prefix="model.model."):
         """Get the transformer states for CoreML conversion"""
@@ -400,11 +401,12 @@ class PhimoeConverter(BaseConverter):
         
         print("Model preprocessing completed")
 
+    # fxl: called by ffn, prefil.. (but not head...? strange code
     def postprocess(self, num_workers=None):
         """Postprocessing steps after conversion.
         
         Args:
-            num_workers: Optional number of workers for parallel processing.
+            num_workers: Optional number of workers for parallel processing.  (fxl: only for kmeans
                         If None, uses default single worker.
         """
         if self.converted_model is not None and self.lut_bits is not None:
@@ -656,8 +658,8 @@ class PhimoeConverter(BaseConverter):
             start_layer = 0
             end_layer = None
             print("Processing all layers at once")
-        
-        class FFNWrapper(torch.nn.Module):      # fxl: make these FFN layers a torch model
+                
+        class FFNWrapper(torch.nn.Module):      
             # fxl: end_layer exclusive 
             def __init__(self, model, start_layer=0, end_layer=None):
                 super().__init__()
@@ -682,6 +684,7 @@ class PhimoeConverter(BaseConverter):
         
         try:
             # Create wrapper and ensure eval mode
+            #   fxl: NB: "model" is the full model with emb and head 
             wrapper = FFNWrapper(model, start_layer, end_layer)
             wrapper.eval()
             
@@ -736,7 +739,8 @@ class PhimoeConverter(BaseConverter):
             # Apply LUT quantization if specified
             if self.lut_bits:
                 self.converted_model = mlmodel
-                self.postprocess(num_workers=None)  # Allow passing num_workers if needed
+                # self.postprocess(num_workers=None)  # Allow passing num_workers if needed
+                self.postprocess(num_workers=8)  # fxl
                 mlmodel = self.converted_model
             
             return mlmodel
@@ -769,6 +773,8 @@ class PhimoeConverter(BaseConverter):
             start_layer = 0
             end_layer = None
         
+        # fxl: this still wraps around the entire model (w emb, head), but forward() below sends thorugh a 
+        #    batched input with IN_PREFILL=True
         class PrefillWrapper(torch.nn.Module):
             def __init__(self, model, start_layer=0, end_layer=None):
                 super().__init__()
@@ -832,8 +838,16 @@ class PhimoeConverter(BaseConverter):
             ]
             
             # debugging --- 
-            # print(traced_model.inlined_graph)   # this is useful 
-            
+            # Save the torch IR to a file
+            torch_output_path = "/tmp/prefill-chunk%d.torchir" %(chunk_idx if chunk_idx is not None else 0)
+            print(f"Saving torch IR program to {torch_output_path}")
+            with open(torch_output_path, "w") as f:
+                f.write(str(traced_model.inlined_graph))
+
+            # print(traced_model.graph)  # only show top-level, not very useful
+            # print(traced_model.model)  # uesful: a list of modules
+            # breakpoint()
+
             # Convert to CoreML
             mlmodel = ct.convert(
                 traced_model,
@@ -846,13 +860,21 @@ class PhimoeConverter(BaseConverter):
                 convert_to="mlprogram",
                 debug=True
             )
-            
+            # dump "spec" (i.e MIL) to a text file
+            from google.protobuf import text_format
+            spec = mlmodel.get_spec()
+            spec_text = text_format.MessageToString(spec)
+            with open("/tmp/spec-prefill-chunk%d.txt" %(chunk_idx), "w") as f:
+                f.write(spec_text)
+
+            # breakpoint()
             print("Prefill mode conversion completed")
             
             # Apply LUT quantization if specified
             if self.lut_bits:
                 self.converted_model = mlmodel
-                self.postprocess(num_workers=None)  # Allow passing num_workers if needed
+                # self.postprocess(num_workers=None)  # Allow passing num_workers if needed
+                self.postprocess(num_workers=8)  # fxl
                 mlmodel = self.converted_model
             
             return mlmodel

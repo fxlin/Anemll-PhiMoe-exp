@@ -1,0 +1,224 @@
+graph(%self.1 : __torch__.___torch_mangle_484.PrefillWrapper,
+      %hidden_states.1 : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=0, device=cpu),
+      %position_ids : Long(64, strides=[1], requires_grad=0, device=cpu),
+      %causal_mask : Half(1, 1, 64, 512, strides=[32768, 32768, 512, 1], requires_grad=0, device=cpu),
+      %current_pos : Long(1, strides=[1], requires_grad=0, device=cpu)):
+  %model.1 : __torch__.anemll.models.phimoe_model.___torch_mangle_483.PhimoeForCausalLM = prim::GetAttr[name="model"](%self.1)
+  %model : __torch__.anemll.models.phimoe_model.___torch_mangle_474.PhimoeModel = prim::GetAttr[name="model"](%model.1)
+  %7 : int = aten::Int(%current_pos), scope: __module.model.model
+  %8 : int = aten::Int(%current_pos), scope: __module.model.model
+  %10 : str = prim::Constant[value="bhqk,bhkd->bhqd"](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/functional.py:422:0
+  %11 : Double(requires_grad=0, device=cpu) = prim::Constant[value={11.3137}](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1034:0
+  %12 : str = prim::Constant[value="bhqd,bhkd->bhqk"](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/functional.py:422:0
+  %13 : int = prim::Constant[value=-2](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %14 : int = prim::Constant[value=512](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1007:0
+  %15 : int = prim::Constant[value=4](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %16 : int = prim::Constant[value=-1](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:938:0
+  %17 : Long(requires_grad=0, device=cpu) = prim::Constant[value={2}](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/_tensor.py:1137:0
+  %18 : int = prim::Constant[value=8](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:775:0
+  %19 : int = prim::Constant[value=3](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:774:0
+  %20 : int = prim::Constant[value=32](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:774:0
+  %21 : int = prim::Constant[value=2](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:766:0
+  %22 : int = prim::Constant[value=4096](), scope: __module.model.model/__module.model.model.layers.1.input_layernorm # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/functional.py:2910:0
+  %23 : float = prim::Constant[value=1.0000000000000001e-05](), scope: __module.model.model/__module.model.model.layers.1.input_layernorm # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/functional.py:2910:0
+  %24 : bool = prim::Constant[value=1](), scope: __module.model.model/__module.model.model.layers.1.input_layernorm # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/functional.py:2910:0
+  %25 : bool = prim::Constant[value=0](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1229:0
+  %26 : int = prim::Constant[value=5](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1229:0
+  %27 : Float(1, 131072, 128, strides=[16777216, 128, 1], requires_grad=0, device=cpu) = prim::Constant[value=<Tensor>](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1219:0
+  %28 : int = prim::Constant[value=128](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %29 : NoneType = prim::Constant(), scope: __module.model.model
+  %30 : int = prim::Constant[value=1](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %31 : int = prim::Constant[value=9223372036854775807](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %32 : Float(1, 131072, 128, strides=[16777216, 128, 1], requires_grad=0, device=cpu) = prim::Constant[value=<Tensor>](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %33 : int = prim::Constant[value=0](), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1217:0
+  %layers : __torch__.torch.nn.modules.container.___torch_mangle_472.ModuleList = prim::GetAttr[name="layers"](%model)
+  %_1 : __torch__.anemll.models.phimoe_model.___torch_mangle_471.PhimoeDecoderLayer = prim::GetAttr[name="1"](%layers)
+  %self_attn : __torch__.anemll.models.phimoe_model.___torch_mangle_401.PhimoeAttention = prim::GetAttr[name="self_attn"](%_1)
+  %o_proj : __torch__.torch.nn.modules.linear.___torch_mangle_399.Linear = prim::GetAttr[name="o_proj"](%self_attn)
+  %kv_cache_0 : Tensor = prim::GetAttr[name="kv_cache_0"](%model)
+  %layers.7 : __torch__.torch.nn.modules.container.___torch_mangle_472.ModuleList = prim::GetAttr[name="layers"](%model)
+  %_1.7 : __torch__.anemll.models.phimoe_model.___torch_mangle_471.PhimoeDecoderLayer = prim::GetAttr[name="1"](%layers.7)
+  %self_attn.5 : __torch__.anemll.models.phimoe_model.___torch_mangle_401.PhimoeAttention = prim::GetAttr[name="self_attn"](%_1.7)
+  %v_proj : __torch__.torch.nn.modules.conv.___torch_mangle_398.Conv2d = prim::GetAttr[name="v_proj"](%self_attn.5)
+  %layers.5 : __torch__.torch.nn.modules.container.___torch_mangle_472.ModuleList = prim::GetAttr[name="layers"](%model)
+  %_1.5 : __torch__.anemll.models.phimoe_model.___torch_mangle_471.PhimoeDecoderLayer = prim::GetAttr[name="1"](%layers.5)
+  %self_attn.3 : __torch__.anemll.models.phimoe_model.___torch_mangle_401.PhimoeAttention = prim::GetAttr[name="self_attn"](%_1.5)
+  %k_proj : __torch__.torch.nn.modules.conv.___torch_mangle_397.Conv2d = prim::GetAttr[name="k_proj"](%self_attn.3)
+  %layers.3 : __torch__.torch.nn.modules.container.___torch_mangle_472.ModuleList = prim::GetAttr[name="layers"](%model)
+  %_1.3 : __torch__.anemll.models.phimoe_model.___torch_mangle_471.PhimoeDecoderLayer = prim::GetAttr[name="1"](%layers.3)
+  %self_attn.1 : __torch__.anemll.models.phimoe_model.___torch_mangle_401.PhimoeAttention = prim::GetAttr[name="self_attn"](%_1.3)
+  %q_proj : __torch__.torch.nn.modules.conv.___torch_mangle_396.Conv2d = prim::GetAttr[name="q_proj"](%self_attn.1)
+  %layers.1 : __torch__.torch.nn.modules.container.___torch_mangle_472.ModuleList = prim::GetAttr[name="layers"](%model)
+  %_1.1 : __torch__.anemll.models.phimoe_model.___torch_mangle_471.PhimoeDecoderLayer = prim::GetAttr[name="1"](%layers.1)
+  %input_layernorm : __torch__.torch.nn.modules.normalization.___torch_mangle_469.LayerNorm = prim::GetAttr[name="input_layernorm"](%_1.1)
+  %54 : int = aten::size(%position_ids, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1217:0
+  %55 : Float(1, 131072, 128, strides=[16777216, 128, 1], requires_grad=0, device=cpu) = aten::slice(%32, %33, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %56 : Tensor?[] = prim::ListConstruct(%29, %position_ids), scope: __module.model.model
+  %57 : Float(1, 64, 128, strides=[8192, 128, 1], requires_grad=0, device=cpu) = aten::index(%55, %56), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %58 : int[] = prim::ListConstruct(%30, %54, %30, %28), scope: __module.model.model
+  %cos.1 : Float(1, 64, 1, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::view(%57, %58), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1218:0
+  %60 : Float(1, 131072, 128, strides=[16777216, 128, 1], requires_grad=0, device=cpu) = aten::slice(%27, %33, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1219:0
+  %61 : Tensor?[] = prim::ListConstruct(%29, %position_ids), scope: __module.model.model
+  %62 : Float(1, 64, 128, strides=[8192, 128, 1], requires_grad=0, device=cpu) = aten::index(%60, %61), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1219:0
+  %63 : int[] = prim::ListConstruct(%30, %54, %30, %28), scope: __module.model.model
+  %sin.1 : Float(1, 64, 1, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::view(%62, %63), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1219:0
+  %cos.3 : Half(1, 64, 1, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::to(%cos.1, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1229:0
+  %sin.3 : Half(1, 64, 1, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::to(%sin.1, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1229:0
+  %bias.9 : Tensor = prim::GetAttr[name="bias"](%input_layernorm)
+  %weight.9 : Tensor = prim::GetAttr[name="weight"](%input_layernorm)
+  %69 : int[] = prim::ListConstruct(%22), scope: __module.model.model/__module.model.model.layers.1.input_layernorm
+  %hidden_states.3 : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::layer_norm(%hidden_states.1, %69, %weight.9, %bias.9, %23, %24), scope: __module.model.model/__module.model.model.layers.1.input_layernorm # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/functional.py:2910:0
+  %71 : int = aten::size(%hidden_states.3, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:757:0
+  %72 : int[] = prim::ListConstruct(%33, %21, %30), scope: __module.model.model
+  %73 : Half(1, 4096, 64, strides=[262144, 1, 4096], requires_grad=1, device=cpu) = aten::permute(%hidden_states.3, %72), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:766:0
+  %74 : Half(1, 4096, 1, 64, strides=[262144, 1, 262144, 4096], requires_grad=1, device=cpu) = aten::unsqueeze(%73, %21), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:766:0
+  %input.1 : Half(1, 4096, 1, 64, strides=[262144, 1, 262144, 4096], requires_grad=1, device=cpu) = aten::to(%74, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:766:0
+  %bias.11 : Tensor = prim::GetAttr[name="bias"](%q_proj)
+  %weight.11 : Tensor = prim::GetAttr[name="weight"](%q_proj)
+  %78 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.q_proj
+  %79 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.q_proj
+  %80 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.q_proj
+  %81 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.q_proj
+  %query_states.1 : Half(1, 4096, 1, 64, strides=[262144, 1, 262144, 4096], requires_grad=0, device=cpu) = aten::_convolution(%input.1, %weight.11, %bias.11, %78, %79, %80, %25, %81, %30, %25, %25, %24, %24), scope: __module.model.model/__module.model.model.layers.1.self_attn.q_proj # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/modules/conv.py:549:0
+  %bias.13 : Tensor = prim::GetAttr[name="bias"](%k_proj)
+  %weight.13 : Tensor = prim::GetAttr[name="weight"](%k_proj)
+  %85 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.k_proj
+  %86 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.k_proj
+  %87 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.k_proj
+  %88 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.k_proj
+  %key_states.1 : Half(1, 1024, 1, 64, strides=[65536, 1, 65536, 1024], requires_grad=0, device=cpu) = aten::_convolution(%input.1, %weight.13, %bias.13, %85, %86, %87, %25, %88, %30, %25, %25, %24, %24), scope: __module.model.model/__module.model.model.layers.1.self_attn.k_proj # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/modules/conv.py:549:0
+  %bias.15 : Tensor = prim::GetAttr[name="bias"](%v_proj)
+  %weight.15 : Tensor = prim::GetAttr[name="weight"](%v_proj)
+  %92 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.v_proj
+  %93 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.v_proj
+  %94 : int[] = prim::ListConstruct(%30, %30), scope: __module.model.model/__module.model.model.layers.1.self_attn.v_proj
+  %95 : int[] = prim::ListConstruct(%33, %33), scope: __module.model.model/__module.model.model.layers.1.self_attn.v_proj
+  %value_states.1 : Half(1, 1024, 1, 64, strides=[65536, 1, 65536, 1024], requires_grad=0, device=cpu) = aten::_convolution(%input.1, %weight.15, %bias.15, %92, %93, %94, %25, %95, %30, %25, %25, %24, %24), scope: __module.model.model/__module.model.model.layers.1.self_attn.v_proj # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/modules/conv.py:549:0
+  %97 : int[] = prim::ListConstruct(%30, %20, %28, %71), scope: __module.model.model
+  %98 : Half(1, 32, 128, 64, strides=[4096, 128, 1, 4096], requires_grad=1, device=cpu) = aten::view(%query_states.1, %97), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:774:0
+  %99 : int[] = prim::ListConstruct(%33, %30, %19, %21), scope: __module.model.model
+  %x.1 : Half(1, 32, 64, 128, strides=[4096, 128, 4096, 1], requires_grad=1, device=cpu) = aten::permute(%98, %99), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:774:0
+  %101 : int[] = prim::ListConstruct(%30, %18, %28, %71), scope: __module.model.model
+  %102 : Half(1, 8, 128, 64, strides=[1024, 128, 1, 1024], requires_grad=1, device=cpu) = aten::view(%key_states.1, %101), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:775:0
+  %103 : int[] = prim::ListConstruct(%33, %30, %19, %21), scope: __module.model.model
+  %x.5 : Half(1, 8, 64, 128, strides=[1024, 128, 1024, 1], requires_grad=1, device=cpu) = aten::permute(%102, %103), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:775:0
+  %105 : int[] = prim::ListConstruct(%30, %18, %28, %71), scope: __module.model.model
+  %106 : Half(1, 8, 128, 64, strides=[1024, 128, 1, 1024], requires_grad=1, device=cpu) = aten::view(%value_states.1, %105), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:776:0
+  %107 : int[] = prim::ListConstruct(%33, %30, %19, %21), scope: __module.model.model
+  %value_states.3 : Half(1, 8, 64, 128, strides=[1024, 128, 1024, 1], requires_grad=1, device=cpu) = aten::permute(%106, %107), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:776:0
+  %109 : int[] = prim::ListConstruct(%33, %21, %30, %19), scope: __module.model.model
+  %cos.5 : Half(1, 1, 64, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::permute(%cos.3, %109), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:781:0
+  %111 : int[] = prim::ListConstruct(%33, %21, %30, %19), scope: __module.model.model
+  %sin.5 : Half(1, 1, 64, 128, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::permute(%sin.3, %111), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:782:0
+  %x.3 : Half(1, 32, 64, 128, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::contiguous(%x.1, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:919:0
+  %114 : int = aten::size(%x.3, %19), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:920:0
+  %115 : Long(device=cpu) = prim::NumToTensor(%114), scope: __module.model.model
+  %half_dim.1 : Long(requires_grad=0, device=cpu) = aten::floor_divide(%115, %17), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/_tensor.py:1137:0
+  %117 : int = aten::Int(%half_dim.1), scope: __module.model.model
+  %118 : int = aten::Int(%half_dim.1), scope: __module.model.model
+  %119 : int = aten::Int(%half_dim.1), scope: __module.model.model
+  %120 : int = aten::Int(%half_dim.1), scope: __module.model.model
+  %x1.1 : Half(1, 32, 64, 64, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::slice(%x.3, %19, %33, %120, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:922:0
+  %x2.1 : Half(1, 32, 64, 64, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::slice(%x.3, %19, %119, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:923:0
+  %cos.7 : Half(1, 1, 64, 64, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::slice(%cos.5, %19, %33, %118, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:931:0
+  %sin.7 : Half(1, 1, 64, 64, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::slice(%sin.5, %19, %33, %117, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:932:0
+  %125 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x1.1, %cos.7), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %126 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x2.1, %sin.7), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %127 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::sub(%125, %126, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %128 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x2.1, %cos.7), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %129 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x1.1, %sin.7), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %130 : Half(1, 32, 64, 64, strides=[131072, 4096, 64, 1], requires_grad=1, device=cpu) = aten::add(%128, %129, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %131 : Tensor[] = prim::ListConstruct(%127, %130), scope: __module.model.model
+  %rotated.1 : Half(1, 32, 64, 128, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::cat(%131, %16), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:938:0
+  %query_states : Half(1, 32, 64, 128, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::to(%rotated.1, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:944:0
+  %x.7 : Half(1, 8, 64, 128, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::contiguous(%x.5, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:919:0
+  %135 : int = aten::size(%x.7, %19), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:920:0
+  %136 : Long(device=cpu) = prim::NumToTensor(%135), scope: __module.model.model
+  %half_dim : Long(requires_grad=0, device=cpu) = aten::floor_divide(%136, %17), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/_tensor.py:1137:0
+  %138 : int = aten::Int(%half_dim), scope: __module.model.model
+  %139 : int = aten::Int(%half_dim), scope: __module.model.model
+  %140 : int = aten::Int(%half_dim), scope: __module.model.model
+  %141 : int = aten::Int(%half_dim), scope: __module.model.model
+  %x1 : Half(1, 8, 64, 64, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::slice(%x.7, %19, %33, %141, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:922:0
+  %x2 : Half(1, 8, 64, 64, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::slice(%x.7, %19, %140, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:923:0
+  %cos : Half(1, 1, 64, 64, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::slice(%cos.5, %19, %33, %139, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:931:0
+  %sin : Half(1, 1, 64, 64, strides=[8192, 128, 128, 1], requires_grad=0, device=cpu) = aten::slice(%sin.5, %19, %33, %138, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:932:0
+  %146 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x1, %cos), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %147 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x2, %sin), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %148 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::sub(%146, %147, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:939:0
+  %149 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x2, %cos), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %150 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::mul(%x1, %sin), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %151 : Half(1, 8, 64, 64, strides=[32768, 4096, 64, 1], requires_grad=1, device=cpu) = aten::add(%149, %150, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:940:0
+  %152 : Tensor[] = prim::ListConstruct(%148, %151), scope: __module.model.model
+  %rotated : Half(1, 8, 64, 128, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::cat(%152, %16), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:938:0
+  %key_states.3 : Half(1, 8, 64, 128, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::to(%rotated, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:944:0
+  %155 : Half(1, 32, 64, 128, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::to(%query_states, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:787:0
+  %key_states : Half(1, 8, 64, 128, strides=[65536, 8192, 128, 1], requires_grad=1, device=cpu) = aten::to(%key_states.3, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:787:0
+  %value_states : Half(1, 8, 64, 128, strides=[1024, 128, 1024, 1], requires_grad=1, device=cpu) = aten::to(%value_states.3, %26, %25, %25, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:787:0
+  %158 : int = aten::size(%key_states, %21), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1280:0
+  %seq_length : Long(device=cpu) = prim::NumToTensor(%158), scope: __module.model.model
+  %160 : Long(1, strides=[1], requires_grad=0, device=cpu) = aten::add(%current_pos, %seq_length, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %161 : int = aten::Int(%160), scope: __module.model.model
+  %162 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%kv_cache_0, %33, %30, %21, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %163 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%162, %30, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %164 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%163, %21, %8, %161, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %165 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%164, %19, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %166 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::copy_(%165, %key_states, %25), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1281:0
+  %167 : Long(1, strides=[1], requires_grad=0, device=cpu) = aten::add(%current_pos, %seq_length, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %168 : int = aten::Int(%167), scope: __module.model.model
+  %169 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%kv_cache_0, %33, %19, %15, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %170 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%169, %30, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %171 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%170, %21, %7, %168, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %172 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%171, %19, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %173 : Half(1, 8, 64, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::copy_(%172, %value_states, %25), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1282:0
+  %174 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%kv_cache_0, %33, %30, %21, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1285:0
+  %K_layer_cache : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::squeeze(%174, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1285:0
+  %176 : Half(1, 8, 512, 128, strides=[524288, 65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%kv_cache_0, %33, %19, %15, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1286:0
+  %V_layer_cache : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::squeeze(%176, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1286:0
+  %178 : int = aten::size(%hidden_states.3, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1001:0
+  %179 : int = aten::size(%hidden_states.3, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1001:0
+  %180 : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%K_layer_cache, %30, %33, %14, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1007:0
+  %x.9 : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%180, %21, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1007:0
+  %182 : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%V_layer_cache, %30, %33, %14, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1008:0
+  %x.15 : Half(8, 512, 128, strides=[65536, 128, 1], requires_grad=1, device=cpu) = aten::slice(%182, %21, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1008:0
+  %x.11 : Half(8, 1, 512, 128, strides=[65536, 65536, 128, 1], requires_grad=1, device=cpu) = aten::unsqueeze(%x.9, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1068:0
+  %185 : int[] = prim::ListConstruct(%30, %15, %30, %30), scope: __module.model.model
+  %x.13 : Half(8, 4, 512, 128, strides=[262144, 65536, 128, 1], requires_grad=1, device=cpu) = aten::repeat(%x.11, %185), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1069:0
+  %187 : int = aten::size(%x.13, %13), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %188 : int = aten::size(%x.13, %16), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %189 : int[] = prim::ListConstruct(%30, %16, %187, %188), scope: __module.model.model
+  %190 : Half(1, 32, 512, 128, strides=[2097152, 65536, 128, 1], requires_grad=1, device=cpu) = aten::view(%x.13, %189), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %x.17 : Half(8, 1, 512, 128, strides=[65536, 65536, 128, 1], requires_grad=1, device=cpu) = aten::unsqueeze(%x.15, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1068:0
+  %192 : int[] = prim::ListConstruct(%30, %15, %30, %30), scope: __module.model.model
+  %x.19 : Half(8, 4, 512, 128, strides=[262144, 65536, 128, 1], requires_grad=1, device=cpu) = aten::repeat(%x.17, %192), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1069:0
+  %194 : int = aten::size(%x.19, %13), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %195 : int = aten::size(%x.19, %16), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %196 : int[] = prim::ListConstruct(%30, %16, %194, %195), scope: __module.model.model
+  %197 : Half(1, 32, 512, 128, strides=[2097152, 65536, 128, 1], requires_grad=1, device=cpu) = aten::view(%x.19, %196), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1070:0
+  %198 : Tensor[] = prim::ListConstruct(%155, %190), scope: __module.model.model
+  %199 : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::einsum(%12, %198, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/functional.py:422:0
+  %attn_weights : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::div(%199, %11), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1034:0
+  %201 : Half(1, 1, 64, 512, strides=[32768, 32768, 512, 1], requires_grad=0, device=cpu) = aten::slice(%causal_mask, %33, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1040:0
+  %202 : Half(1, 1, 64, 512, strides=[32768, 32768, 512, 1], requires_grad=0, device=cpu) = aten::slice(%201, %30, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1040:0
+  %203 : Half(1, 1, 64, 512, strides=[32768, 32768, 512, 1], requires_grad=0, device=cpu) = aten::slice(%202, %21, %33, %14, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1040:0
+  %x.21 : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::add(%attn_weights, %203, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1040:0
+  %x_max : Half(1, 32, 64, 1, strides=[2048, 64, 1, 1], requires_grad=1, device=cpu), %206 : Long(1, 32, 64, 1, strides=[2048, 64, 1, 1], requires_grad=0, device=cpu) = aten::max(%x.21, %16, %24), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:896:0
+  %x : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::sub(%x.21, %x_max, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:897:0
+  %exp_x : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::exp(%x), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:898:0
+  %209 : int[] = prim::ListConstruct(%16), scope: __module.model.model
+  %210 : Half(1, 32, 64, 1, strides=[2048, 64, 1, 1], requires_grad=1, device=cpu) = aten::sum(%exp_x, %209, %24, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:899:0
+  %211 : Half(1, 32, 64, 512, strides=[1048576, 32768, 512, 1], requires_grad=1, device=cpu) = aten::div(%exp_x, %210), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:899:0
+  %212 : Tensor[] = prim::ListConstruct(%211, %197), scope: __module.model.model
+  %attn_output.1 : Half(1, 32, 64, 128, strides=[262144, 8192, 128, 1], requires_grad=1, device=cpu) = aten::einsum(%10, %212, %29), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/functional.py:422:0
+  %214 : Half(1, 64, 32, 128, strides=[262144, 128, 8192, 1], requires_grad=1, device=cpu) = aten::transpose(%attn_output.1, %30, %21), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1054:0
+  %attn_output.3 : Half(1, 64, 32, 128, strides=[262144, 4096, 128, 1], requires_grad=1, device=cpu) = aten::contiguous(%214, %33), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1054:0
+  %216 : int[] = prim::ListConstruct(%178, %179, %22), scope: __module.model.model
+  %input : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::reshape(%attn_output.3, %216), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1055:0
+  %bias : Tensor = prim::GetAttr[name="bias"](%o_proj)
+  %weight : Tensor = prim::GetAttr[name="weight"](%o_proj)
+  %attn_output : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::linear(%input, %weight, %bias), scope: __module.model.model/__module.model.model.layers.1.self_attn.o_proj # /Users/felixlin/workspace-apple-silicon/anemll-bench/env-anemll-bench/lib/python3.9/site-packages/torch/nn/modules/linear.py:125:0
+  %hidden_states : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::add(%hidden_states.1, %attn_output, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1296:0
+  %222 : Half(1, 64, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::slice(%hidden_states, %33, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1449:0
+  %223 : Half(1, 1, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::slice(%222, %30, %33, %30, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1449:0
+  %224 : Half(1, 1, 4096, strides=[262144, 4096, 1], requires_grad=1, device=cpu) = aten::slice(%223, %21, %33, %31, %30), scope: __module.model.model # /Users/felixlin/workspace-apple-silicon/Anemll/anemll/models/phimoe_model.py:1449:0
+  return (%224)

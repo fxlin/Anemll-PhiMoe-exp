@@ -1,10 +1,50 @@
 fxl  2025-04
 
-
 # to profile: 
 source ~/workspace-apple-silicon/anemll-bench/env-anemll-bench/bin/activate
+
+---------------------------
+1B dense, 80% ANE usage
+
 python ~/workspace-apple-silicon/anemll-bench/examples/profile_local_model-simple.py \
---model /Users/felixlin/models/Llama-3.2-1B-coreml-batch256-fxl/llama_prefill_lut4_chunk_01of02.mlpackage
+--model /Users/felixlin/models/Llama-3.2-1B-coreml-batch256-fxl/llama_prefill_lut4_chunk_01of02.mlpackage \
+--iterations 100
+
+Average inference time: 43.54 ms
+Throughput: 6.44 GB/s (based on weights + I/O)
+Model size: 265.05 MB
+Weights size: 265.05 MB (100.0% of total)
+
+---------------------------
+Phi -- MoE (not running on ANE??? 
+python ~/workspace-apple-silicon/anemll-bench/examples/profile_local_model-simple.py \
+--model /Volumes/wdblack-2tb/models/Phi-3.5-MoE-instruct-coreml-fxl/phimoe_prefill_lut4_chunk_01of02.mlpackage \
+--iterations 100
+
+Average inference time: 230.00 ms
+Throughput: 3.13 GB/s (based on weights + I/O)
+Model size: 685.42 MB
+Weights size: 685.42 MB (100.0% of total)
+
+Phi -- head (runs on ANE, fast)
+python ~/workspace-apple-silicon/anemll-bench/examples/profile_local_model-simple.py \
+--model /Volumes/wdblack-2tb/models/Phi-3.5-MoE-instruct-coreml-fxl/phimoe_lm_head_lut6.mlpackage \
+--iterations 1000
+
+---------------------------
+8B, dense. 90% ANE usage
+
+python ~/workspace-apple-silicon/anemll-bench/examples/profile_local_model-simple.py \
+--model /Volumes/wdblack-2tb/models/llama-3-8b-Instruct-coreml-fxl/llama_prefill_lut4_chunk_01of02.mlpackage \
+--iterations 100
+
+Average inference time: 70.50 ms
+Throughput: 24.88 GB/s (based on weights + I/O)
+Model size: 1671.41 MB
+Weights size: 1671.41 MB (100.0% of total)
+
+
+---------------------------
 
 
 
@@ -38,10 +78,24 @@ test phi moe conversion
 ./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
 --only 2
 
-# Step 4: Convert transformer blocks -- prefill mode (model Part 2)
+# Step 4: Convert transformer blocks -- prefill mode (transformer blocks = FFN = model Part 2)
 ./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ --output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
 --only 4 \
 2>&1 | tee phimoe-convert.log
+
+
+# Step 3: Convert transformer blocks -- decoding mode
+./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ \
+--output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
+--only 3 \
+2>&1 | tee phimoe-convert.log
+
+# start from step 5
+./anemll/utils/convert_model_phi.sh --model ~/models/Phi-3.5-MoE-instruct/ \
+--output ~/models/Phi-3.5-MoE-instruct-coreml-fxl/ \
+--restart 5 \
+2>&1 | tee phimoe-convert.log
+
 
 ###################
 
@@ -105,13 +159,25 @@ git clone https://huggingface.co/anemll/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3
 
 # ---  converted ok. good
 
-## -- chat.py, ok on preconverted model
+############################################
+## -- chat.py, ok on preconverted model .. ok
 python ./tests/chat.py \
 --meta /models/anemll-Meta-Llama-3.2-1B-LUT8_ctx512_0.3.0/
 
-#   -- chat.py, failed on tokenizer of my converted model (TBD, should be easy
+#   -- chat.py. toeknizer problem
+# tokenizer = AutoTokenizer.from_pretrained returns a bool type? why? TBD
 python ./tests/chat.py \
+--tokenizer ~/models/Llama-3.2-1B-Instruct/ \
 --meta ~/models/Llama-3.2-1B-Instruct-coreml-fxl/meta.yaml
+
+# -- chat.py on my converted phi moe... ok
+python ./tests/chat.py \
+--tokenizer ~/models/Phi-3.5-MoE-instruct/ \
+--meta ~/models/Phi-3.5-MoE-instruct-coreml-fxl/meta.yaml
+
+# llama3 8b my converted model. ok (took long time to load 
+python ./tests/chat.py \
+--meta ~/models/llama-3-8b-Instruct-coreml-fxl/meta.yaml
 
 # to download model
 converted: 

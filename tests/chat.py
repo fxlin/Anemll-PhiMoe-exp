@@ -346,8 +346,6 @@ def load_models(args,metadata):
 def initialize_tokenizer(model_path=None):
     """Initialize and configure the tokenizer."""
     try:
-
-        
         tokenizer = AutoTokenizer.from_pretrained(
             str(model_path), 
             use_fast=False,
