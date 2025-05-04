@@ -3,10 +3,12 @@
 source ~/workspace-apple-silicon/myenv-python39/bin/activate
 python tests/test_coreml_matmul.py
 
-ok. can offload to ANE
 also cf
 test code
 https://github.com/apple/coremltools/blob/07ffd86005e385d8eddfd22072836cfb457f7350/coremltools/converters/mil/mil/ops/tests/iOS18/test_tensor_transformation.py
+
+
+results: seems always map to CPU (not ANE)?? contrast to conv2d which maps to ANE well 
 '''
 
 import coremltools as ct
@@ -16,16 +18,15 @@ import torch
 
 # 1. Create dummy PyTorch weights
 N=4096
-# bs=1
 bs=8
-W_torch = torch.randn(bs,N,N)  # Shape (1024, 1024)
+W_torch = torch.randn(N,N)  # Shape (1024, 1024)
 
 # 2. Convert to numpy array
 # W_np = W_torch.numpy().astype(np.float32)
 W_np = W_torch.numpy().astype(np.float16)
 
-# 3. Define MIL program: input X (1,1024) -> output = X @ W
-@mb.program(input_specs=[mb.TensorSpec(shape=(1, N), dtype=types.fp16)], opset_version=ct.target.iOS18)
+# 3. Define MIL program: input X (bs,1024) -> output = X @ W
+@mb.program(input_specs=[mb.TensorSpec(shape=(bs, N), dtype=types.fp16)], opset_version=ct.target.iOS18)
 def simple_matmul_model(X):
     W = mb.const(val=W_np, name="weight_matrix")  # Frozen weight
     Y = mb.matmul(x=X, y=W, name="output_matmul")
@@ -49,6 +50,9 @@ mlmodel = ct.convert(
     minimum_deployment_target=ct.target.iOS18,
     compute_units=ct.ComputeUnit.CPU_AND_NE,
 )
+
+# 6. Save - unquantized
+mlmodel.save("/tmp/SimpleMatmul.mlpackage")
 
 #  5. --- quant ---- 
 # https://apple.github.io/coremltools/source/coremltools.optimize.coreml.utilities.html#coremltools.optimize.coreml.OptimizationConfig
@@ -87,11 +91,11 @@ except Exception as e:
     print(f"Warning: LUT quantization failed: {str(e)}")
     print("Continuing with unquantized model...")
     
-# 6. Save
-mlmodel.save("/tmp/SimpleMatmul.mlpackage")
+# 6. Save - quant 
+mlmodel.save("/tmp/SimpleMatmul-LUT%d.mlpackage" %LUT_BITS)
 
 # 7. Test
-# X_sample = np.random.rand(1, 1024).astype(np.float16)
-X_sample = np.random.rand(1, N)
+# X_sample = np.random.rand(bs, 1024).astype(np.float16)
+X_sample = np.random.rand(bs, N)
 result = mlmodel.predict({"X": X_sample})
 print("Output shape:", result["output_matmul"].shape)
