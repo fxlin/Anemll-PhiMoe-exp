@@ -38,6 +38,8 @@ if __name__ == "__main__":
     class Config:
         hidden_size = 512
         intermediate_size = 1024
+        # hidden_size = 4096      # phi
+        # intermediate_size = 6400        # phi           
         num_local_experts = 16
         num_experts_per_tok = 2
         hidden_act = 'silu'

@@ -565,8 +565,8 @@ class PhimoeBlockSparseTop2MLP(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         original_shape = hidden_states.shape     # shape [bs, hidden_dim]
         # fxl: -1: inferred bs, hidden_dim, H=1, W=1 for conv2d kernel size 
-        # x = hidden_states.view(-1, self.hidden_dim, 1, 1)
-        x = hidden_states.view(1, self.hidden_dim, -1, 1) # shape [1, hidden_dim, bs, 1]
+        x = hidden_states.view(-1, self.hidden_dim, 1, 1)  # shape [bs, hidden_dim, 1, 1]
+        # x = hidden_states.view(1, self.hidden_dim, -1, 1) # shape [1, hidden_dim, bs, 1]  # will cause coreml runtime error... why? "Always keep bs as first dimension?"
         # fxl: below "*" is elementwise gating
         out = self.act_fn(self.w1(x)) * self.w3(x)
         out = self.w2(out)
@@ -725,7 +725,7 @@ class PhimoeSparseMoeBlock(nn.Module):
 
         # fxl: flatten input to something like (batch_size * seq_len, hidden_dim)
         hidden_states = hidden_states.view(-1, hidden_dim)
-        
+
         final_hidden_states = torch.zeros(
             batch_size * sequence_length, 
             hidden_dim, 
@@ -759,7 +759,7 @@ class PhimoeSparseMoeBlock(nn.Module):
             # expert_weights shape: [num_routed_tokens]
             
             expert_out = self.experts[expert_idx](hidden_states[mask]).to(dtype=hidden_states.dtype)  # [tokens, hidden]
-            expert_out = expert_out * expert_weights.unsqueeze(-1)  # [tokens, hidden]
+            expert_out = expert_out * expert_weights.unsqueeze(-1)  # res: [tokens, hidden]
             expert_out = expert_out.to(dtype=final_hidden_states.dtype)
             
             final_hidden_states[mask] += expert_out

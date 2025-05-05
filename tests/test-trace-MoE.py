@@ -80,8 +80,6 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
                 torch.zeros_like(topk_weights)
             ).sum(dim=-1)[mask]         # fxl: "weights" as in "attention weights".... here, expert_weights may be empty. (expert is not used, which seems fine) 
             
-            print(expert_weights.shape, mask.shape)
-
             expert_out = self.experts[expert_idx](hidden_states_flat[mask]).to(dtype=hidden_states.dtype)  # [tokens, hidden, 1, 1]
             expert_out = expert_out.squeeze(-1).squeeze(-1) * expert_weights.unsqueeze(-1)  # [tokens, hidden]
             expert_out = expert_out.to(dtype=final_hidden_states.dtype)
@@ -111,10 +109,10 @@ seqlen = 64    # test prefill
 
 if __name__ == "__main__":
     class Config:
-        # hidden_size = 512
-        # intermediate_size = 1024
-        hidden_size = 4096      # phi
-        intermediate_size = 6400        # phi   
+        hidden_size = 512
+        intermediate_size = 1024
+        # hidden_size = 4096      # phi
+        # intermediate_size = 6400        # phi   
         num_local_experts = 16        
         num_experts_per_tok = 2
         router_jitter_noise = 0.1
