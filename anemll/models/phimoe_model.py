@@ -563,9 +563,10 @@ class PhimoeBlockSparseTop2MLP(nn.Module):
     #     return current_hidden_states
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        original_shape = hidden_states.shape
+        original_shape = hidden_states.shape     # shape [bs, hidden_dim]
         # fxl: -1: inferred bs, hidden_dim, H=1, W=1 for conv2d kernel size 
-        x = hidden_states.view(-1, self.hidden_dim, 1, 1)
+        # x = hidden_states.view(-1, self.hidden_dim, 1, 1)
+        x = hidden_states.view(1, self.hidden_dim, -1, 1) # shape [1, hidden_dim, bs, 1]
         # fxl: below "*" is elementwise gating
         out = self.act_fn(self.w1(x)) * self.w3(x)
         out = self.w2(out)
@@ -609,7 +610,10 @@ class PhimoeSparseMoeBlock(nn.Module):
         self.router_jitter_noise = config.router_jitter_noise
         self.input_jitter_noise = config.input_jitter_noise
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+
+    # origin design. uses tensors as indices to get top2, and then do in-place update index_add_()
+    # unfriendly to coreml
+    def forward0(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """ """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         if self.training and self.input_jitter_noise > 0:
@@ -620,16 +624,24 @@ class PhimoeSparseMoeBlock(nn.Module):
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(
             # fxl:to appease conv2d (gate)
-            hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1)
-        )
-        router_logits = router_logits.view(batch_size * sequence_length, self.num_experts) # fxl: convert back 
+            #hidden_states.view(batch_size * sequence_length, hidden_dim, 1, 1)
+            # conv2d expects (bs, input_chan=hidden_dim, H=len, W=1)
+            hidden_states.permute(0,2,1).unsqueeze(-1)
+        )  # output shape (bs, output_chan=num_experts, H=len, W=1)
+        # remove the last dim, and permuate back 
+        router_logits = router_logits.squeeze(-1).permute(0, 2, 1)  
+        # after this, router_logits has shape [batch, seq, experts]  
+        # router_logits = router_logits.view(batch_size * sequence_length, self.num_experts)
+        router_logits = router_logits.view(-1, self.num_experts)
+        # now router_logits shape [batch*seq, experts]
+        
+        # routing_weights, selected_experts = sparsemixer(        
+        #     router_logits,
+        #     jitter_eps=self.router_jitter_noise,
+        #     training=self.training,
+        # )
+        routing_weights, selected_experts = sparsemixer_simple(router_logits)
 
-        # routing_weights, selected_experts = sparsemixer(
-        routing_weights, selected_experts = sparsemixer_simple(
-            router_logits,
-            jitter_eps=self.router_jitter_noise,
-            training=self.training,
-        )
         '''
         selected_experts.shape = (bs=64,topk=2)
         '''
@@ -689,6 +701,69 @@ class PhimoeSparseMoeBlock(nn.Module):
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
         # return final_hidden_states, router_logits   # we dont need router logits
         return final_hidden_states
+
+    # simplified fwd
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """ """
+        batch_size, sequence_length, hidden_dim = hidden_states.shape        
+        router_logits = self.gate(
+            # conv2d expects (bs, input_chan=hidden_dim, H=len, W=1)
+            hidden_states.permute(0,2,1).unsqueeze(-1)
+        )  # output shape (bs, output_chan=num_experts, H=len, W=1)
+        # remove the last dim, and permuate back 
+        router_logits = router_logits.squeeze(-1).permute(0, 2, 1)  
+        # after this, router_logits has shape [batch, seq, experts]  
+        router_logits = router_logits.view(-1, self.num_experts) # shape [batch*seq, experts]
+
+        # Simplified top-k routing
+        routing_weights = torch.softmax(router_logits, dim=-1)
+        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1)
+        # topk_weights shape: (bs=64*seq_len, topk=2), topk_indices shape: (bs=64*seq_len, topk=2)
+        
+        # Normalize weights
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+
+        # fxl: flatten input to something like (batch_size * seq_len, hidden_dim)
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        
+        final_hidden_states = torch.zeros(
+            batch_size * sequence_length, 
+            hidden_dim, 
+            device=hidden_states.device,
+            dtype=hidden_states.dtype
+        )
+
+        expert_mask = torch.zeros(
+            self.num_experts,
+            batch_size * sequence_length,
+            dtype=torch.bool,
+            device=hidden_states.device
+        )        
+        
+        for expert_idx in range(self.num_experts):
+            # mask set to True for ANY topk indices that match expert_idx (scalar). so mask is 1D (not 2D)
+            mask = (topk_indices == expert_idx).any(dim=-1)   
+            expert_mask[expert_idx] = mask
+            # mask shape: [bs], type bool
+
+        # Process through experts
+        for expert_idx in range(self.num_experts):
+            mask = expert_mask[expert_idx]
+                
+            expert_weights = torch.where(
+                topk_indices == expert_idx,   # condition
+                topk_weights,    # "input" 
+                torch.zeros_like(topk_weights)    # "other"
+            ).sum(dim=-1)[mask]         # mask shape [bs], True/False
+            # fxl: "weights" as in "attention weights".... "sum" will reduce zero values
+            # expert_weights shape: [num_routed_tokens]
+            
+            expert_out = self.experts[expert_idx](hidden_states[mask]).to(dtype=hidden_states.dtype)  # [tokens, hidden]
+            expert_out = expert_out * expert_weights.unsqueeze(-1)  # [tokens, hidden]
+            expert_out = expert_out.to(dtype=final_hidden_states.dtype)
+            
+            final_hidden_states[mask] += expert_out
+        return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
 
 # cf: src/transformers/models/phimoe/modeling_phimoe.py     PhimoeAttention
 class PhimoeAttention(nn.Module):

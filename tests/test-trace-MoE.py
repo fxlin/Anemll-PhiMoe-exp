@@ -53,7 +53,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
             dtype=hidden_states.dtype
         )
         
-        # Create expert mask
+        # Create expert mask  # shape: (num_experts=16, bs=64*seq_len)
         expert_mask = torch.zeros(
             self.num_experts,
             batch_size * sequence_length,
@@ -62,8 +62,10 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         )
         
         for expert_idx in range(self.num_experts):
-            mask = (topk_indices == expert_idx).any(dim=-1)
+            # mask set to True for any topk indices that match expert_idx (scalar)
+            mask = (topk_indices == expert_idx).any(dim=-1)   
             expert_mask[expert_idx] = mask
+            # mask shape: [bs], type bool
         
         # Flatten hidden states for expert processing: [batch*seq, hidden, 1, 1]
         hidden_states_flat = hidden_states.reshape(-1, hidden_dim).unsqueeze(-1).unsqueeze(-1)
@@ -78,6 +80,8 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
                 torch.zeros_like(topk_weights)
             ).sum(dim=-1)[mask]         # fxl: "weights" as in "attention weights".... here, expert_weights may be empty. (expert is not used, which seems fine) 
             
+            print(expert_weights.shape, mask.shape)
+
             expert_out = self.experts[expert_idx](hidden_states_flat[mask]).to(dtype=hidden_states.dtype)  # [tokens, hidden, 1, 1]
             expert_out = expert_out.squeeze(-1).squeeze(-1) * expert_weights.unsqueeze(-1)  # [tokens, hidden]
             expert_out = expert_out.to(dtype=final_hidden_states.dtype)
@@ -103,11 +107,15 @@ def convert_to_coreml(model, sample_input, output_path):
     mlmodel.save(output_path)
     return mlmodel
 
+seqlen = 64    # test prefill
+
 if __name__ == "__main__":
     class Config:
-        hidden_size = 512
-        intermediate_size = 1024
-        num_local_experts = 8
+        # hidden_size = 512
+        # intermediate_size = 1024
+        hidden_size = 4096      # phi
+        intermediate_size = 6400        # phi   
+        num_local_experts = 16        
         num_experts_per_tok = 2
         router_jitter_noise = 0.1
         input_jitter_noise = 0.1
@@ -117,7 +125,7 @@ if __name__ == "__main__":
     model.eval()
     model.half()
 
-    sample_input = torch.randn(1, 32, config.hidden_size).half()     # bs=1, seqlen=32 
+    sample_input = torch.randn(1, seqlen, config.hidden_size).half()     # bs=1
     coreml_model = convert_to_coreml(model, sample_input, "/tmp/SparseMoeBlock-Conv2d.mlpackage")
     
     with torch.no_grad():
