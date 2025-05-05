@@ -79,6 +79,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
                 topk_weights,
                 torch.zeros_like(topk_weights)
             ).sum(dim=-1)[mask]         # fxl: "weights" as in "attention weights".... here, expert_weights may be empty. (expert is not used, which seems fine) 
+            # expert_weights shape: [num_routed_tokens]
             
             expert_out = self.experts[expert_idx](hidden_states_flat[mask]).to(dtype=hidden_states.dtype)  # [tokens, hidden, 1, 1]
             expert_out = expert_out.squeeze(-1).squeeze(-1) * expert_weights.unsqueeze(-1)  # [tokens, hidden]
