@@ -5,6 +5,7 @@ test coreml MIL programs
 cf: https://apple.github.io/coremltools/docs-guides/source/model-intermediate-language.html
 https://github.com/apple/coremltools/blob/main/coremltools/converters/mil/mil/ops/defs/iOS15/linear.py
 
+100% on cpu... b/c of the condition??
 '''
 import coremltools as ct
 from coremltools.converters.mil import Builder as mb
@@ -16,8 +17,12 @@ N=4096
 bs=8
 # 1. Create dummy PyTorch weights (replace with your actual weights)
 A_torch = torch.randn(N, 2)  # Shape (1024, 2)
-B_torch = torch.randn(bs,N,N)  # Shape (1024, 1024)
-C_torch = torch.randn(bs,N,N)  # Shape (1024, 1024)
+B_torch = torch.randn(N,N)  # Shape (1024, 1024)
+C_torch = torch.randn(N,N)  # Shape (1024, 1024)
+
+# for conv2d
+B_torch = B_torch.unsqueeze(-1).unsqueeze(-1)  # Shape (1024, 1024, 1, 1)
+C_torch = C_torch.unsqueeze(-1).unsqueeze(-1)  # Shape (1024, 1024, 1, 1)
 
 # 2. Convert to numpy arrays
 A_np = A_torch.numpy().astype(np.float16)
@@ -25,7 +30,7 @@ B_np = B_torch.numpy().astype(np.float16)
 C_np = C_torch.numpy().astype(np.float16)
 
 # 3. Define MIL program with frozen weights
-@mb.program(input_specs=[mb.TensorSpec(shape=(1, N), dtype=types.fp16),], opset_version=ct.target.iOS18)
+@mb.program(input_specs=[mb.TensorSpec(shape=(bs, N), dtype=types.fp16),], opset_version=ct.target.iOS18)
 # @mb.program(input_specs=[mb.TensorSpec(shape=(1, 1024), dtype=types.fp32),])  # Only X is input
 def conditional_matmul_model(X):
     # Load weights as constants
@@ -45,17 +50,23 @@ def conditional_matmul_model(X):
     
     # Step 3: Conditional multiplication
     def true_fn():
-        return mb.matmul(x=X, y=B, name="xb_matmul")
+        # return mb.matmul(x=X, y=B, name="xb_matmul")
+        X_reshaped = mb.reshape(x=X, shape=[bs, N, 1, 1])
+        return mb.conv(x=X_reshaped, weight=B, name="xb_matmul", strides=[1, 1], pad_type="valid")
     
     def false_fn():
-        return mb.matmul(x=X, y=C, name="xc_matmul")
+        # return mb.matmul(x=X, y=C, name="xc_matmul")
+        X_reshaped = mb.reshape(x=X, shape=[bs, N, 1, 1])
+        return mb.conv(x=X_reshaped, weight=C, name="xc_matmul", strides=[1, 1], pad_type="valid")
     
     output = mb.cond(
         pred=is_first_larger,
         _true_fn=true_fn,
         _false_fn=false_fn,
-        name="conditional_output"
+        name="conditional_output_pre"
     )
+
+    output = mb.reshape(x=output, shape=[bs, N], name="conditional_output")
     
     return output
 
@@ -63,21 +74,25 @@ def conditional_matmul_model(X):
 print(conditional_matmul_model)
 
 '''
-main[CoreML8](%X: (1, 1024, fp16)(Tensor)) {
+main[CoreML8](%X: (8, 4096, fp16)(Tensor)) {
   block0() {
-    %xa_matmul: (1, 2, fp16)(Tensor) = matmul(x=%X, y=%A_weight, transpose_x=False, transpose_y=False, name="xa_matmul")
+    %xa_matmul: (8, 2, fp16)(Tensor) = matmul(x=%X, y=%A_weight, transpose_x=False, transpose_y=False, name="xa_matmul")
     %slice_by_index_0: (fp16)(Scalar) = slice_by_index(x=%xa_matmul, begin=[0, 0], end=[1, 1], squeeze_mask=[True, True], name="slice_by_index_0")
     %slice_by_index_1: (fp16)(Scalar) = slice_by_index(x=%xa_matmul, begin=[0, 1], end=[1, 2], squeeze_mask=[True, True], name="slice_by_index_1")
     %compare_elements: (bool)(Scalar) = greater(x=%slice_by_index_0, y=%slice_by_index_1, name="compare_elements")
-    %conditional_output: (1, 1024, fp16)(Tensor) = cond(pred=%compare_elements, name="conditional_output")
-      conditional_output_true() {
-        %xb_matmul: (1, 1024, fp16)(Tensor) = matmul(x=%X, y=%B_weight, transpose_x=False, transpose_y=False, name="xb_matmul")
+    %conditional_output_pre: (8, 4096, 1, 1, fp16)(Tensor) = cond(pred=%compare_elements, name="conditional_output_pre")
+      conditional_output_pre_true() {
+        %reshape_0: (8, 4096, 1, 1, fp16)(Tensor) = reshape(x=%X, shape=[8, 4096, 1, 1], name="reshape_0")
+        %xb_matmul: (8, 4096, 1, 1, fp16)(Tensor) = conv(x=%reshape_0, weight=%B_weight, strides=[1, 1], pad_type="valid", pad=[0, 0, 0, 0], dilations=[1, 1], groups=1, name="xb_matmul")
       } -> (%xb_matmul)
-      conditional_output_false() {
-        %xc_matmul: (1, 1024, fp16)(Tensor) = matmul(x=%X, y=%C_weight, transpose_x=False, transpose_y=False, name="xc_matmul")
+      conditional_output_pre_false() {
+        %reshape_1: (8, 4096, 1, 1, fp16)(Tensor) = reshape(x=%X, shape=[8, 4096, 1, 1], name="reshape_1")
+        %xc_matmul: (8, 4096, 1, 1, fp16)(Tensor) = conv(x=%reshape_1, weight=%C_weight, strides=[1, 1], pad_type="valid", pad=[0, 0, 0, 0], dilations=[1, 1], groups=1, name="xc_matmul")
       } -> (%xc_matmul)
+    %conditional_output: (8, 4096, fp16)(Tensor) = reshape(x=%conditional_output_pre, shape=[8, 4096], name="conditional_output")
   } -> (%conditional_output)
 }
+
 '''
 
 # 4. Convert to CoreML model
@@ -93,6 +108,6 @@ mlmodel = ct.convert(
 mlmodel.save("/tmp/ConditionalMatmul.mlpackage")
 
 # Test prediction
-X_sample = np.random.rand(1, N).astype(np.float16)
+X_sample = np.random.rand(bs, N).astype(np.float16)
 result = mlmodel.predict({"X": X_sample})
 print("Output shape:", result["conditional_output"].shape)  # Should be (1, 1024)
