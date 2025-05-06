@@ -130,7 +130,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         expert_weights = torch.zeros_like(expert_inputs[..., 0], dtype=hidden_states.dtype)
 
         expert_outputs = torch.zeros_like(expert_inputs, dtype=hidden_states.dtype)
-
+        
         # Gather hidden states per expert
         hidden_states_flat = hidden_states.view(B, hidden_dim).unsqueeze(-1).unsqueeze(-1)
         expert_inputs = expert_inputs.unsqueeze(-1).unsqueeze(-1)
@@ -139,10 +139,22 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         expert_weights[expert_row, expert_col] = token_weights.to(MODEL_DTYPE)
 
         # Process each expert and accumulate outputs        
+        '''
         for expert_id in range(self.num_experts):
             x = self.experts[expert_id](expert_inputs[expert_id])  # [MAX_TOKENS, hidden]
             x = x.squeeze(-1).squeeze(-1)  # [MAX_TOKENS, hidden]
             expert_outputs[expert_id] = x * expert_weights[expert_id].unsqueeze(-1)  # [MAX_TOKENS, hidden]
+            # trandlated to MIL slice_update which is unsupported by ANE? 
+        '''
+
+        expert_out_list = []     # this is ok, as trace will capture individual tensors
+        for expert_id in range(self.num_experts):
+            x = self.experts[expert_id](expert_inputs[expert_id])  # [MAX_TOKENS, hidden, 1, 1]
+            x = x.squeeze(-1).squeeze(-1)                           # [MAX_TOKENS, hidden]
+            expert_out_list.append(x)
+        expert_out_tensor = torch.stack(expert_out_list, dim=0)
+        expert_outputs = expert_out_tensor * expert_weights.unsqueeze(-1)
+
 
         # Scatter expert_outputs back to token space
         final_hidden_states = torch.zeros(B, hidden_dim, device=hidden_states.device, dtype=hidden_states.dtype)
@@ -157,6 +169,113 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         
         return final_hidden_states.view(batch_size, sequence_length, hidden_dim)
 
+    # get rid of mask, dynamic shapes 
+    # TODO: use int16 for token id throughput, save lots of cast
+    def forward_fixed1(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        B = batch_size * sequence_length
+
+        # Reshape for Conv2d
+        hidden_states_reshaped = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [B, hidden, seq, 1]
+        router_logits = self.gate(hidden_states_reshaped).squeeze(-1).permute(0, 2, 1)  # [B, seq, experts]
+        router_logits = router_logits.reshape(B, self.num_experts)
+
+        routing_weights = torch.softmax(router_logits, dim=-1)
+        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1)
+        # topk_indices.to(torch.int16)   # wont help; cause additional cast 
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+
+        # Flatten routing info
+        flat_expert_ids = topk_indices.reshape(-1)            # [B * top_k]
+        flat_token_ids = torch.arange(B, device=hidden_states.device).repeat_interleave(self.top_k)  # [B * top_k], like [0,0,1,1,...]
+        flat_weights = topk_weights.reshape(-1)
+
+        # Sort by expert id
+        sorted_expert_ids, sort_idx = flat_expert_ids.sort()
+        sorted_token_ids = flat_token_ids[sort_idx]    # token ids arranged by expert ids
+        sorted_weights = flat_weights[sort_idx]   # ditto 
+
+        # Count how many tokens routed to each expert
+        expert_counts = torch.bincount(sorted_expert_ids, minlength=self.num_experts)
+        MAX_TOKENS = (B // self.num_experts) + 16  # tolerance padding
+
+        # Build offset within each expert row
+        #expert_offsets = torch.zeros_like(sorted_expert_ids)
+        #offset = torch.zeros(self.num_experts, dtype=torch.long, device=hidden_states.device)
+        cumsum_per_expert = torch.cumsum(
+            torch.nn.functional.one_hot(sorted_expert_ids, num_classes=self.num_experts),
+            dim=0
+        )
+        # Gather the count at each row's own expert index and subtract 1
+        expert_offsets = cumsum_per_expert.gather(1, sorted_expert_ids.unsqueeze(1)).squeeze(1) - 1
+                
+        expert_row = sorted_expert_ids
+        expert_col = expert_offsets
+        token_ids = sorted_token_ids
+        token_weights = sorted_weights
+
+        # to be used later (cast from int to fp, cpu only)
+        one_hot_maskT = torch.nn.functional.one_hot(token_ids, num_classes=B).T.to(MODEL_DTYPE)  # [N, B]
+        # one_hot_maskT[0][0] += 0.00000000001  # Minimal update to trigger any deferred operations without side effects
+        one_hot_maskT += 0.0000001 
+        # force cast to happen here? instead of deferred. maybe a dummy update to one_hot_maskT?
+
+        # Initialize expert input/output buffers
+        #   below --- "expert_inputs" is routing table. row: expert  col: token ids
+        expert_inputs_full = torch.zeros(self.num_experts, B, hidden_dim, device=hidden_states.device, dtype=hidden_states.dtype).unsqueeze(-1).unsqueeze(-1)
+        expert_weights_full = torch.zeros(self.num_experts, B, device=hidden_states.device, dtype=hidden_states.dtype)
+        
+        # Gather hidden states per expert
+        hidden_states_flat = hidden_states.view(B, hidden_dim).unsqueeze(-1).unsqueeze(-1) # unsequze to appease conv2d
+        # for whatever reason, the cast to float16 is needed for coreml conversion to work. 
+        # below: invokes scatter_nd, unsupported by ANE. on cpu. can be expensive b/c of copy?
+        expert_inputs_full[expert_row, expert_col] = hidden_states_flat[token_ids].to(MODEL_DTYPE) # does this actually copy? bad
+        expert_weights_full[expert_row, expert_col] = token_weights.to(MODEL_DTYPE)
+
+        # truncate to MAX_TOKENS
+        expert_inputs = expert_inputs_full[:, :MAX_TOKENS, :]
+        expert_weights = expert_weights_full[:, :MAX_TOKENS]
+
+        # expert_outputs = torch.zeros_like(expert_inputs, dtype=hidden_states.dtype) # not useful?
+
+        # Process each expert and accumulate outputs        
+        expert_out_list = []     # this is ok, as trace will capture individual tensors
+        for expert_id in range(self.num_experts):
+            x = self.experts[expert_id](expert_inputs[expert_id])  # [MAX_TOKENS, hidden, 1, 1]
+            x = x.squeeze(-1).squeeze(-1)                           # [MAX_TOKENS, hidden]
+
+            # zero pad x from [MAX_TOKENS, hidden] to [B, hidden]
+            pad_len = B - MAX_TOKENS
+            padded = torch.cat([x, torch.zeros(pad_len, hidden_dim, device=hidden_states.device, dtype=hidden_states.dtype)], dim=0)
+            expert_out_list.append(padded)
+        expert_out_tensor = torch.stack(expert_out_list, dim=0)
+        expert_outputs = expert_out_tensor * expert_weights_full.unsqueeze(-1) # shape: [num_experts, B, hidden]
+
+        # Scatter expert_outputs back to token space (safe b/c we padded expert_out_tensor)
+        final_hidden_states = torch.zeros(B, hidden_dim, device=hidden_states.device, dtype=hidden_states.dtype)
+        # below translates to gather_nd, which must cast to uses int16 indices??
+        scatter_values = expert_outputs[expert_row, expert_col]  # [B*topk, hidden]  flatten to a seq of hidden state
+
+        # below, sum up to per token hidden state. index_add_  unimpelmented by coreml
+        # final_hidden_states.index_add_(dim=0, index=token_ids, source=scatter_values)
+        
+        # sparse accumulation...
+        # one_hot: cpu only; cast (int to fp): cpu only
+        # one_hot_mask = torch.nn.functional.one_hot(token_ids, num_classes=B).to(MODEL_DTYPE)  # [N, B]
+        contributions = torch.matmul(one_hot_maskT, scatter_values)   # supported on ANE??
+        final_hidden_states += contributions
+
+        ''' 
+        # naive impl of index_add_. lots of small, cpu-only ops
+        result = torch.zeros((B, hidden_dim), dtype=scatter_values.dtype, device=scatter_values.device)
+        # Then scatter and sum:
+        for idx, val in zip(token_ids, scatter_values):
+            result[idx] += val      # internal tensor update, bad 
+        final_hidden_states = result
+        '''
+
+        return final_hidden_states.view(batch_size, sequence_length, hidden_dim)
+    
     # orig 
     def forward0(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
@@ -308,7 +427,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # return self.forward0(hidden_states)
         # return self.forward_nomask(hidden_states)
-        return self.forward_fixed(hidden_states)
+        return self.forward_fixed1(hidden_states)
         # return self.forward_bucketed(hidden_states)
 
 # Conversion to CoreML
