@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import coremltools as ct
 import numpy as np
+import torch.nn.functional as F
 from datetime import datetime
 
 MODEL_DTYPE = torch.float16 
@@ -296,8 +297,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
 
         return final_hidden_states.view(batch_size, sequence_length, hidden_dim)
     
-    # get rid of mask, dynamic shapes
-    # further opt
+    # static shapes, grouped mm
     # TODO: use int16 for token id throughout, save lots of cast
     def forward_fixed2(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
@@ -315,11 +315,11 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
 
         '''
         # attempt to replace topk (cpu only)-- not very useful. topk is fast anyway
-        topk_weights = []
+        topk_weights = [] 
         topk_indices = []
         routing_weights_copy = routing_weights.clone()
         for _ in range(self.top_k):
-            max_values, max_indices = routing_weights_copy.max(dim=-1)
+            max_values, max_indices = routing_weights_copy.max(dim=-1)   # extract max values and indices..
             topk_weights.append(max_values)
             topk_indices.append(max_indices)
 
@@ -418,15 +418,180 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         contributions = torch.matmul(one_hot_maskT, scatter_values)   # supported on ANE??
         final_hidden_states += contributions
 
-        ''' 
-        # naive impl of index_add_. lots of small, cpu-only ops
-        result = torch.zeros((B, hidden_dim), dtype=scatter_values.dtype, device=scatter_values.device)
-        # Then scatter and sum:
-        for idx, val in zip(token_ids, scatter_values):
-            result[idx] += val      # internal tensor update, bad 
-        final_hidden_states = result
-        '''
         return final_hidden_states.view(batch_size, sequence_length, hidden_dim)
+        
+    # forward 1 token only, based on forward_fixed2. very "token-centric" (instead of expert-centric)
+    # hidden_states shape [bs=1,len=1, hidden_dim]
+    def forward_single(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        B = batch_size * sequence_length
+        assert B == 1
+
+        # Reshape for Conv2d
+        hidden_states_reshaped = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+        router_logits = self.gate(hidden_states_reshaped).squeeze(-1).squeeze(-1)  # [1, num_experts]
+
+        routing_weights = torch.softmax(router_logits, dim=-1)   # [1, num_experts]
+
+        ##### topk #########
+        # topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1) # [1, top_k]
+
+        # below, max() twice to avoid topk(). but still cpu only (e.g. reduce_argmax with int32 unsupported on ANE
+        topk_weights = []  # a list of tensors
+        topk_indices = []
+        routing_weights_copy = routing_weights[0].clone()  # tensor, shape: [num_experts]
+
+        for _ in range(self.top_k):
+            max_value, max_index = routing_weights_copy.max(dim=-1)   # extract max values and indices..
+            max_index.to(torch.int16)
+            topk_weights.append(max_value)
+            topk_indices.append(max_index)
+            # Mask out max by directly using gather-based broadcasting
+            routing_weights_copy[max_index] = -float('inf')
+        topk_weights = torch.stack(topk_weights)   # [1, top_k]
+        topk_indices = torch.stack(topk_indices)   # [1, top_k]
+        # breakpoint()
+        ############# end of topk ##########
+
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True) # [1, top_k]
+
+        # Extract top-2 expert indices and weights (flatten) --> below will lower to gather??
+        # expert_ids = topk_indices[0]      # [top_k] = [e1, e2]
+        # weights = topk_weights[0]         # [top_k] = [w1, w2]
+
+        expert_ids = topk_indices
+        weights = topk_weights
+
+        # Apply experts in a loop
+        x = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+        combined = 0.0
+        for i in range(self.top_k):
+            out = self.experts[expert_ids[i]](x).squeeze(-1).squeeze(-1)  # [1, hidden]
+            combined += weights[i] * out
+        return combined.view(batch_size, sequence_length, hidden_dim)
+
+    # slice expert weights from a big tensor weight. expert index dynamic
+    #   not successfully ... cf comments inline
+    # forward 1 token only, based on forward_fixed2. very "token-centric" (instead of expert-centric)
+    # hidden_states shape [bs=1,len=1, hidden_dim]
+    def forward_single_slice(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        B = batch_size * sequence_length
+        assert B == 1
+
+        # Reshape for Conv2d
+        hidden_states_reshaped = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+        router_logits = self.gate(hidden_states_reshaped).squeeze(-1).squeeze(-1)  # [1, num_experts]
+
+        routing_weights = torch.softmax(router_logits, dim=-1)   # [1, num_experts]
+
+        ##### topk #########
+        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1) # [1, top_k]
+        # Extract top-2 expert indices and weights (flatten) --> below will lower to gather??
+        expert_ids = topk_indices[0]      # [top_k] = [e1, e2]
+        weights = topk_weights[0]         # [top_k] = [w1, w2]
+
+        # below, max() twice to avoid topk(). but still cpu only (e.g. reduce_argmax with int32 unsupported on ANE
+        '''
+        topk_weights = []  # a list of tensors
+        topk_indices = []
+        routing_weights_copy = routing_weights[0].clone()  # tensor, shape: [num_experts]
+
+        for _ in range(self.top_k):
+            max_value, max_index = routing_weights_copy.max(dim=-1)   # extract max values and indices..
+            max_index.to(torch.int16)
+            topk_weights.append(max_value)
+            topk_indices.append(max_index)
+            # Mask out max by directly using gather-based broadcasting
+            routing_weights_copy[max_index] = -float('inf')
+        topk_weights = torch.stack(topk_weights)   # [1, top_k]
+        topk_indices = torch.stack(topk_indices)   # [1, top_k]
+        # breakpoint()
+        expert_ids = topk_indices
+        weights = topk_weights
+        '''
+        ############# end of topk ##########
+        
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True) # [1, top_k]
+
+        # experts. 
+        # Slice out the expert weights from batched weights, no copy weights
+        x = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+        combined = 0.0
+        for i in range(self.top_k):
+            expert_id = expert_ids[i]
+            # Directly slice weight views — no clone needed
+            # NB: batched conv weight tensor shape: [num_exp*output_dim, input_dim, 1,1]
+            up_w = self.up_proj.weight[
+                expert_id * self.ffn_dim : (expert_id + 1) * self.ffn_dim
+            ]
+            down_w = self.down_proj.weight[
+                expert_id * hidden_dim : (expert_id + 1) * hidden_dim
+            ]
+            # BELOW confuses coreml: "ValueError: C_in / groups = 512/1"
+            #   although pytorch tracing is good. maybe coreml expects weights from nn.module?? (not F)
+            #   a deeper reason: dynamic slicing from static weights poorly supported??? 
+            hidden = F.conv2d(x, up_w)
+            hidden = self.act(hidden)
+            hidden = F.conv2d(hidden, down_w)
+            out = hidden.squeeze(-1).squeeze(-1)
+            combined += weights[i] * out
+        return combined.view(batch_size, sequence_length, hidden_dim)
+    
+    # send the token through all experts ...
+    def forward_single_all(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        B = batch_size * sequence_length
+        assert B == 1
+
+        # Reshape for Conv2d
+        hidden_states_reshaped = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+        router_logits = self.gate(hidden_states_reshaped).squeeze(-1).squeeze(-1)  # [1, num_experts]
+
+        routing_weights = torch.softmax(router_logits, dim=-1)   # [1, num_experts]
+
+        ##### topk #########
+        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1) # [1, top_k]
+        # Extract top-2 expert indices and weights (flatten) --> below will lower to gather??
+        expert_ids = topk_indices[0]      # [top_k] = [e1, e2]
+        weights = topk_weights[0]         # [top_k] = [w1, w2]        
+        ############# end of topk ##########
+
+        weights = weights / weights.sum(dim=-1, keepdim=True) # [1, top_k]
+        weights.to(hidden_states.dtype)  # force cast to appease coreml
+
+        # (2) Build full weights mask: [1, num_experts], unselected experts -> 0 weight 
+        weights_full = torch.zeros(1, self.num_experts, device=hidden_states.device, dtype=hidden_states.dtype)
+        weights_full[0, expert_ids] = weights  # scatter XXX coreml captured as constant???
+
+        # weights_full = routing_weights   #debugging, directly use softmax weights - not changing anything?
+
+        # (3) Expand weights over channels: [1, hidden_dim * num_experts, 1, 1]
+        # XXX weights_mask is captured as constant???
+        weights_mask = weights_full.repeat_interleave(self.hidden_dim, dim=1)  # shape [1, hidden_dim * num_experts]
+        
+        x = hidden_states.permute(0, 2, 1).unsqueeze(-1)  # [1, hidden, 1, 1]
+
+        # (4) Expand input over all experts: [1, hidden_dim * num_experts, 1, 1]
+        x_repeated = x.repeat(1, self.num_experts, 1, 1)
+
+        # (6) Run through grouped MLP
+        hidden = self.up_proj(x_repeated)
+        hidden = self.act(hidden)
+        hidden = self.down_proj(hidden)  # [1, hidden_dim * num_experts, 1, 1]
+
+        hidden = hidden.squeeze(-1).squeeze(-1)  # [1, hidden_dim * num_experts]
+
+        # (5) Multiply: only top-k expert paths are active, weighted
+        hidden = hidden * weights_mask  # [1, hidden_dim * num_experts]
+
+        # Reshape to [1, num_experts, hidden_dim]
+        hidden = hidden.view(1, self.num_experts, self.hidden_dim)
+
+        # (7) Reduce: sum across expert outputs
+        # sum across expert dimension
+        combined = hidden.sum(dim=1)  # [1, hidden_dim]
+        return combined.view(batch_size, sequence_length, self.hidden_dim)
         
     # orig 
     def forward0(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -580,7 +745,10 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         # return self.forward0(hidden_states)
         # return self.forward_nomask(hidden_states)
         # return self.forward_fixed1(hidden_states)
-        return self.forward_fixed2(hidden_states)
+        # return self.forward_fixed2(hidden_states)
+        # return self.forward_single(hidden_states)
+        return self.forward_single_all(hidden_states)
+        # return self.forward_single_slice(hidden_states)
         # return self.forward_bucketed(hidden_states)
 
 # Conversion to CoreML
@@ -605,7 +773,8 @@ def convert_to_coreml(model, sample_input, output_path):
         inputs=[ct.TensorType(name="input", shape=sample_input.shape, dtype=NP_DTYPE)],
         outputs=[ct.TensorType(name="output", dtype=NP_DTYPE)],
         compute_precision=COREML_PRECISION,
-        compute_units=ct.ComputeUnit.CPU_AND_NE,
+        #compute_units=ct.ComputeUnit.CPU_AND_NE,
+        compute_units=ct.ComputeUnit.ALL,
         minimum_deployment_target=ct.target.iOS18,
         debug=True,
     )
@@ -619,7 +788,8 @@ def convert_to_coreml(model, sample_input, output_path):
     mlmodel.save(output_path)
     return mlmodel
 
-seqlen = 64    # test prefill
+# seqlen = 64    # test prefill
+seqlen = 1    # test decode
 
 if __name__ == "__main__":
     class Config:
@@ -641,7 +811,7 @@ if __name__ == "__main__":
     dtype_str = "fp16" if MODEL_DTYPE == torch.float16 else "fp32"
     MODEL_OUTPUT_PATH = f"/tmp/sparse-moeblock_{dtype_str}_{current_time}.mlpackage"
 
-    sample_input = torch.randn(1, seqlen, config.hidden_size).to(MODEL_DTYPE)     # bs=1, seqlen=32
+    sample_input = torch.randn(1, seqlen, config.hidden_size).to(MODEL_DTYPE)
     coreml_model = convert_to_coreml(model, sample_input, MODEL_OUTPUT_PATH)
     
     with torch.no_grad():
