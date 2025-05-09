@@ -9,6 +9,26 @@ MODEL_DTYPE = torch.float16
 MODEL_ITYPE = torch.int16
 # MODEL_DTYPE = torch.float32
 
+seqlen = 64    # test prefill
+# seqlen = 1    # test decode
+
+# NEXPERTS = 16
+NEXPERTS = 8
+# as in phi 3.5 moe
+HIDDEN=4096
+INTERMEDIATE=6400
+
+# INTERMEDIATE * NEXPERTS -- (the expanded ffn dim) should be small than 65536 -- ANE limitation
+# 1. reshape? like increase N or D (in N D C H W)
+# 2. send a subset of experts at a time
+
+MAX_TOKENS = (seqlen // NEXPERTS) + 16  # tolerance padding
+
+'''
+benchmark res
+https://docs.google.com/spreadsheets/d/1VLT8dAXyJv-VEhJd30I9MWF0WiVvF1CXKn7pGLh1fAI/edit?usp=sharing
+'''
+
 class TraceablePhimoeSparseMoeBlock(nn.Module):
     """
     A traceable version of PhimoeSparseMoeBlock that can be converted to CoreML
@@ -349,7 +369,8 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
 
         # Count how many tokens routed to each expert
         expert_counts = torch.bincount(sorted_expert_ids, minlength=self.num_experts)
-        MAX_TOKENS = (B // self.num_experts) + 16  # tolerance padding
+        # MAX_TOKENS = (B // self.num_experts) + 16  # tolerance padding
+        # MAX_TOKENS = (B // self.num_experts) + 2  # tolerance padding
 
         # Build offset within each expert row
         #expert_offsets = torch.zeros_like(sorted_expert_ids)
@@ -538,7 +559,7 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
             combined += weights[i] * out
         return combined.view(batch_size, sequence_length, hidden_dim)
     
-    # send the token through all experts ...
+    # send a token through all experts ...   also cf tests/test-mil-moesingle.py
     def forward_single_all(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         B = batch_size * sequence_length
@@ -745,10 +766,12 @@ class TraceablePhimoeSparseMoeBlock(nn.Module):
         # return self.forward0(hidden_states)
         # return self.forward_nomask(hidden_states)
         # return self.forward_fixed1(hidden_states)
-        # return self.forward_fixed2(hidden_states)
+        return self.forward_fixed2(hidden_states)
+
         # return self.forward_single(hidden_states)
-        return self.forward_single_all(hidden_states)
+        # return self.forward_single_all(hidden_states)
         # return self.forward_single_slice(hidden_states)
+
         # return self.forward_bucketed(hidden_states)
 
 # Conversion to CoreML
@@ -773,8 +796,8 @@ def convert_to_coreml(model, sample_input, output_path):
         inputs=[ct.TensorType(name="input", shape=sample_input.shape, dtype=NP_DTYPE)],
         outputs=[ct.TensorType(name="output", dtype=NP_DTYPE)],
         compute_precision=COREML_PRECISION,
-        #compute_units=ct.ComputeUnit.CPU_AND_NE,
-        compute_units=ct.ComputeUnit.ALL,
+        compute_units=ct.ComputeUnit.CPU_AND_NE,
+        # compute_units=ct.ComputeUnit.ALL,
         minimum_deployment_target=ct.target.iOS18,
         debug=True,
     )
@@ -788,17 +811,18 @@ def convert_to_coreml(model, sample_input, output_path):
     mlmodel.save(output_path)
     return mlmodel
 
-# seqlen = 64    # test prefill
-seqlen = 1    # test decode
 
 if __name__ == "__main__":
     class Config:
-        hidden_size = 512
-        intermediate_size = 1024
-        # hidden_size = 4096      # phi
-        # intermediate_size = 6400        # phi   
-        num_local_experts = 16        
+        # hidden_size = 512
+        # intermediate_size = 1024
+        
+        hidden_size = HIDDEN      # phi
+        intermediate_size = INTERMEDIATE        # phi   
+
+        num_local_experts = NEXPERTS
         num_experts_per_tok = 2
+
         router_jitter_noise = 0.1
         input_jitter_noise = 0.1
     
@@ -809,11 +833,15 @@ if __name__ == "__main__":
 
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     dtype_str = "fp16" if MODEL_DTYPE == torch.float16 else "fp32"
-    MODEL_OUTPUT_PATH = f"/tmp/sparse-moeblock_{dtype_str}_{current_time}.mlpackage"
+    # MODEL_OUTPUT_PATH = f"/tmp/sparse-moeblock_{dtype_str}_{current_time}.mlpackage"
+    MODEL_OUTPUT_PATH = f"/tmp/sparse-moeblock_EXP{NEXPERTS}_D{HIDDEN}_BS{seqlen}_TOK{MAX_TOKENS}.mlpackage"
 
     sample_input = torch.randn(1, seqlen, config.hidden_size).to(MODEL_DTYPE)
     coreml_model = convert_to_coreml(model, sample_input, MODEL_OUTPUT_PATH)
+    print("model written to", MODEL_OUTPUT_PATH)
+
     
+
     with torch.no_grad():
         torch_output = model(sample_input)
 

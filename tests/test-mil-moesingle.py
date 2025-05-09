@@ -3,20 +3,30 @@ from coremltools.converters.mil.mil import Builder as mb, types
 import numpy as np
 
 # Define external weights with grouped expert shape
-NUM_EXPERTS = 16
-HIDDEN=512
-INTERMEDIATE=1024
-# HIDDEN=4096
-# INTERMEDIATE=6400
+# NUM_EXPERTS = 2    # can gen MIL program, but takes long. why?
+NUM_EXPERTS = 4
+# NUM_EXPERTS = 8
 
+# test 
+# HIDDEN=512
+# INTERMEDIATE=1024
+
+# as in phi 3.5 moe
+HIDDEN=4096
+INTERMEDIATE=6400
+
+'''
+benchmark res
+https://docs.google.com/spreadsheets/d/1VLT8dAXyJv-VEhJd30I9MWF0WiVvF1CXKn7pGLh1fAI/edit?usp=sharing
+
+'''
 
 # Conv weight shape: (N_out, N_in, 1, 1)
 EXPERT_UP = np.zeros((NUM_EXPERTS, INTERMEDIATE, HIDDEN, 1, 1), dtype=np.float16)  
 EXPERT_DOWN = np.zeros((NUM_EXPERTS, HIDDEN, INTERMEDIATE, 1, 1), dtype=np.float16) 
 GATE_WEIGHT = np.zeros((NUM_EXPERTS, HIDDEN, 1, 1), dtype=np.float16)
 
-'''
-# not working, see comments inline
+# limitations; see comments inline
 @mb.program(input_specs=[mb.TensorSpec((1, 1, HIDDEN), dtype=types.fp16)], opset_version=ct.target.iOS18)
 def prog(input):
     x = mb.transpose(x=input, perm=[0, 2, 1], name="transpose_0")
@@ -41,12 +51,13 @@ def prog(input):
         k=2,
         axis=-1,
         return_indices=True,
-        # output_indices_dtype="uint16",  # int32 unsupported on ANE 
+        # output_indices_dtype="uint16",  # int32 unsupported on ANE, but uint16 not compatibler with indexing etc
         name="topk_weights_1_cast_fp16"
     )
 
     # === Manually implement topk ===
     # gave up, no clean solution; it seems topk cannot be cleanly implemented on ANE (tyipe mismatch, no support for reduce_argmax int16, etc, etc
+    '''
     max_val = mb.reduce_max(x=routing_weights, axes=[-1], keep_dims=True, name="top1_val")
     max_idx = mb.reduce_argmax(x=routing_weights, axis=-1, output_dtype="uint16", name="top1_idx")
 
@@ -63,6 +74,7 @@ def prog(input):
     topk_vals = mb.concat(values=[max_val, second_val], axis=-1, name="topk_vals")
     topk_indices = mb.stack(values=[max_idx, second_idx], axis=-1, name="topk_indices")
     topk_indices = mb.expand_dims(x=topk_indices, axes=[0])
+    '''
     # ================================
 
     norm = mb.reduce_sum(x=topk_vals, axes=[-1], keep_dims=True, name="op_54_cast_fp16")
@@ -71,7 +83,7 @@ def prog(input):
     # w1 and w2 (scalar multipliers)
     w1 = mb.slice_by_index(
         x=topk_weights,
-        begin=[0, 0],
+        begin=[0, 0],   # either python type, list/tuple of python type, or coreml "Var"
         end=[1, 1],
         end_mask=[False, False],
         squeeze_mask=[True, True],
@@ -87,35 +99,40 @@ def prog(input):
     )
 
     # Fetch expert indices
-    i1 = mb.slice_by_index(x=topk_indices, begin=[0, 0], end=[1, 1], squeeze_mask=[True, True])
-    i2 = mb.slice_by_index(x=topk_indices, begin=[0, 1], end=[1, 2], squeeze_mask=[True, True])
-
+    i1 = mb.slice_by_index(x=topk_indices, begin=[0, 0], end=[1, 1], squeeze_mask=[False, True])
+    i2 = mb.slice_by_index(x=topk_indices, begin=[0, 1], end=[1, 2], squeeze_mask=[False, True])
+    
     # Expert weights as const tensors
     expert_up = mb.const(val=EXPERT_UP, name="expert_up_weight")  # shape [nexp, in, out, 1, 1]
     expert_down = mb.const(val=EXPERT_DOWN, name="expert_down_weight")
 
-    # XXX dynamically slice expert weights. 
-    #  ---> not working, b/c it seems that either both tensors and indces are static, or both are dynamic (???)_
-    # Slice expert1 weights
-    offset = mb.const(val=np.array(1, dtype=np.int32))
-    end_var = mb.add(x=i1, y=offset)
-    # end_index = i1 + 1
-    up1 = mb.slice_by_index(
+    begin = mb.concat(values=[
+    i1,  #Var
+    mb.const(val=[0, 0, 0, 0])
+    ], axis=0)
+    size = mb.const(val=[1, -1, -1, -1, -1])
+
+    up1 = mb.slice_by_size(
         x=expert_up,
-        begin=[i1],
-        # end=[mb.add(x=i1, y=mb.const(val=np.array(1, dtype=np.uint16)))],
-        # end=[mb.add(x=i1, y=mb.const(val=1))],
-        end=[end_var],      # MIL is trying to treat end_var as a constant, if "expert_up" is static shape....
-        # end=[end_index],
-        squeeze_mask=[True]
+        begin=begin,
+        size=size,
     )
-    down1 = mb.slice_by_index(
+
+    begin = mb.concat(values=[
+    i1,  #Var
+    mb.const(val=[0, 0, 0, 0])
+    ], axis=0)
+    size = mb.const(val=[1, -1, -1, -1, -1])    
+
+    down1 = mb.slice_by_size(
         x=expert_down,
-        begin=[i1],
-        # end=[mb.add(x=i1, y=mb.const(val=np.array(1, dtype=np.uint16)))],
-        end=[mb.add(x=i1, y=mb.const(val=np.array(1, dtype=np.int32)))],
-        squeeze_mask=[True]
+        begin=begin,
+        size=size,
     )
+
+    up1 = mb.squeeze(x=up1, axes=[0], name="squeezed_up1")   
+    down1 = mb.squeeze(x=down1, axes=[0], name="squeezed_down1")   
+
     x1 = mb.conv(x=x, weight=up1, strides=[1, 1], pad_type="valid", name="expert1_up")
     x1 = mb.silu(x=x1, name="expert1_act")
     x1 = mb.conv(x=x1, weight=down1, strides=[1, 1], pad_type="valid", name="expert1_down")
@@ -123,21 +140,31 @@ def prog(input):
     out1 = mb.mul(x=w1, y=x1, name="out1_weighted")
 
     # Slice expert2 weights
-    up2 = mb.slice_by_index(
+    begin = mb.concat(values=[
+        i2,  #Var
+        mb.const(val=[0, 0, 0, 0])
+    ], axis=0)
+    size = mb.const(val=[1, -1, -1, -1, -1])
+
+    up2 = mb.slice_by_size(
         x=expert_up,
-        begin=[i2],
-        # end=[mb.add(x=i2, y=mb.const(val=np.array(1, dtype=np.uint16)))],
-        end=[mb.add(x=i2, y=mb.const(val=np.array(1, dtype=np.int32)))],
-        squeeze_mask=[True]
+        begin=begin,
+        size=size,
     )
-    down2 = mb.slice_by_index(
+
+    begin = mb.concat(values=[
+        i2,  #Var
+        mb.const(val=[0, 0, 0, 0])
+    ], axis=0)
+    size = mb.const(val=[1, -1, -1, -1, -1])    
+    down2 = mb.slice_by_size(
         x=expert_down,
-        begin=[i2],
-        # end=[mb.add(x=i2, y=mb.const(val=np.array(1, dtype=np.uint16))
-        end=[mb.add(x=i2, y=mb.const(val=np.array(1, dtype=np.int32))
-)],
-        squeeze_mask=[True]
+        begin=begin,
+        size=size,
     )
+
+    up2 = mb.squeeze(x=up2, axes=[0], name="squeezed_up2")   
+    down2 = mb.squeeze(x=down2, axes=[0], name="squeezed_down2")
     x2 = mb.conv(x=x, weight=up2, strides=[1, 1], pad_type="valid", name="expert2_up")
     x2 = mb.silu(x=x2, name="expert2_act")
     x2 = mb.conv(x=x2, weight=down2, strides=[1, 1], pad_type="valid", name="expert2_down")
@@ -145,11 +172,12 @@ def prog(input):
     out2 = mb.mul(x=w2, y=x2, name="out2_weighted")
 
     combined = mb.add(x=out1, y=out2, name="combined_output")
-    output = mb.reshape(x=combined, shape=[1, 1, HIDDEN], name="final_output")
-
+    output = mb.reshape(x=combined, shape=[1, 1, HIDDEN], name="final_outputs")
     return output
-'''
+
 # print(prog)
+
+TOP_K = 2
 
 # 1 token sent to all experts. use routing weights to sum up 
 @mb.program(input_specs=[mb.TensorSpec((1, 1, HIDDEN), dtype=types.fp16)], opset_version=ct.target.iOS18)
@@ -170,6 +198,34 @@ def prog1(input):
     # Step 1: zero out all but top-k — for simplicity, just keep all and assume softmax ~ topk already
     # You could add masking logic here if needed
     weights_full = routing_weights                         # [1, NUM_EXPERTS]
+    
+    ####  below, zero out all but top-k. works, but ... XXX  ######
+    # no clean solution. topK can be done (cpu, not ANE), 
+    #    but scatter seems quite tedious (and even if done, it's most likely cpu only????
+    ''' 
+    # 1.1: Get top-k indices and values
+    _, indices = mb.topk(x=routing_weights, k=np.int32(TOP_K), axis=-1, return_indices=True)  # [1, K]
+    updates = mb.gather(x=routing_weights, indices=indices, axis=-1)  # [1, K]
+
+    # 1.2: Reshape for scatter compatibility
+    updates = mb.expand_dims(x=updates, axes=[-1])  # [1, K] → [1, K, 1]
+
+    # 1.3: Zero tensor: shape must match routing_weights + trailing dims (1 extra dim)
+    zero_tensor = mb.fill(shape=[1, NUM_EXPERTS, 1], value=np.float16(0.0))  # [1, NUM_EXPERTS, 1]
+    # zero_tensor = mb.mul(x=routing_weights, y=mb.const(val=np.array(0.0, dtype=np.float16))) # silly
+
+    # 1.4: Scatter into position
+    weights_full = mb.scatter(
+        data=zero_tensor,
+        indices=indices,
+        updates=updates,
+        axis=1
+    )  # [1, NUM_EXPERTS, 1]
+
+    # 1.5: Squeeze last dim back to [1, NUM_EXPERTS]
+    weights_full = mb.squeeze(x=weights_full, axes=[-1])
+    '''
+    #######################################
 
     # Expand weights across channels [1, HIDDEN * NUM_EXPERTS]
     weights_mask = mb.tile(
@@ -222,8 +278,8 @@ def prog1(input):
 
 
 mlmodel = ct.convert(
-    # prog,
-    prog1,
+    prog,
+    # prog1,
     compute_precision=ct.precision.FLOAT16,
     convert_to="mlprogram",
     minimum_deployment_target=ct.target.iOS18,
@@ -239,3 +295,24 @@ print(f"MIL program written to: {mil_program_path}")
 
 # Save - unquantized
 mlmodel.save("/tmp/mil-moesingle.mlpackage")
+
+
+# 5. Test
+import time
+
+dummy_input = {"input": np.random.rand(1, 1, HIDDEN).astype(np.float16)}
+
+# Warm-up run
+mlmodel.predict(dummy_input)
+
+# Measure 10 runs
+timings = []
+for _ in range(10):
+    start = time.time()
+    _ = mlmodel.predict(dummy_input)
+    end = time.time()
+    timings.append(end - start)
+
+# Report median time
+median_time = np.median(timings)
+print(f"Median prediction time over 10 runs: {median_time:.6f} seconds")

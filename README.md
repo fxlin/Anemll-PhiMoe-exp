@@ -3,6 +3,10 @@ fxl  2025-04
 # to profile: 
 source ~/workspace-apple-silicon/anemll-bench/env-anemll-bench/bin/activate
 
+update: to profile
+
+python tests/profile.py --model ~/models/llama-3-8b-Instruct-coreml-fxl/llama_prefill_lut4_chunk_01of02.mlpackage  --iterations 200
+
 ---------------------------
 1B dense, 80% ANE usage
 
