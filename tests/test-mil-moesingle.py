@@ -26,7 +26,8 @@ EXPERT_UP = np.zeros((NUM_EXPERTS, INTERMEDIATE, HIDDEN, 1, 1), dtype=np.float16
 EXPERT_DOWN = np.zeros((NUM_EXPERTS, HIDDEN, INTERMEDIATE, 1, 1), dtype=np.float16) 
 GATE_WEIGHT = np.zeros((NUM_EXPERTS, HIDDEN, 1, 1), dtype=np.float16)
 
-# limitations; see comments inline
+# use slice_by_size to put together the expert weights
+# limitations: weights by copy and cpu only. see comments inline
 @mb.program(input_specs=[mb.TensorSpec((1, 1, HIDDEN), dtype=types.fp16)], opset_version=ct.target.iOS18)
 def prog(input):
     x = mb.transpose(x=input, perm=[0, 2, 1], name="transpose_0")
@@ -54,28 +55,6 @@ def prog(input):
         # output_indices_dtype="uint16",  # int32 unsupported on ANE, but uint16 not compatibler with indexing etc
         name="topk_weights_1_cast_fp16"
     )
-
-    # === Manually implement topk ===
-    # gave up, no clean solution; it seems topk cannot be cleanly implemented on ANE (tyipe mismatch, no support for reduce_argmax int16, etc, etc
-    '''
-    max_val = mb.reduce_max(x=routing_weights, axes=[-1], keep_dims=True, name="top1_val")
-    max_idx = mb.reduce_argmax(x=routing_weights, axis=-1, output_dtype="uint16", name="top1_idx")
-
-    range_tensor = mb.range_1d(start=0, end=NUM_EXPERTS, step=1, name="expert_range")
-    range_tensor = mb.reshape(x=range_tensor, shape=(1, NUM_EXPERTS))
-    max_idx_u16 = mb.cast(x=max_idx, dtype=types.uint16)
-    mask = mb.not_equal(x=range_tensor, y=max_idx_u16)
-    mask = mb.cast(x=mask, dtype=types.fp16)
-    masked_values = mb.mul(x=routing_weights, y=mask, name="masked_weights")
-
-    second_val = mb.reduce_max(x=masked_values, axes=[-1], keep_dims=True, name="top2_val")
-    second_idx = mb.reduce_argmax(x=masked_values, axis=-1, output_dtype="uint16", name="top2_idx")
-
-    topk_vals = mb.concat(values=[max_val, second_val], axis=-1, name="topk_vals")
-    topk_indices = mb.stack(values=[max_idx, second_idx], axis=-1, name="topk_indices")
-    topk_indices = mb.expand_dims(x=topk_indices, axes=[0])
-    '''
-    # ================================
 
     norm = mb.reduce_sum(x=topk_vals, axes=[-1], keep_dims=True, name="op_54_cast_fp16")
     topk_weights = mb.real_div(x=topk_vals, y=norm, name="topk_weights_cast_fp16")
@@ -176,6 +155,59 @@ def prog(input):
     return output
 
 # print(prog)
+
+#  below: use the "list" ops 
+IN=HIDDEN
+OUT=INTERMEDIATE
+EXPERT_UP_LIST = [np.random.rand(INTERMEDIATE, HIDDEN, 1, 1).astype(np.float16) for _ in range(NUM_EXPERTS)]
+@mb.program(input_specs=[mb.TensorSpec(shape=(1, 1, IN), dtype=types.fp16)], opset_version=ct.target.iOS18)
+def prog_list(input):
+    # Step 1: reshape input for conv
+    x = mb.transpose(x=input, perm=[0, 2, 1])          # (1, HIDDEN, 1)
+    x = mb.expand_dims(x=x, axes=[-1])                 # (1, HIDDEN, 1, 1)
+
+    # Step 2: Create expert list
+    expert_list = mb.make_list(
+        init_length=NUM_EXPERTS,
+        dynamic_length=False,
+        elem_shape=[OUT, IN, 1, 1],
+        # dtype=types.fp16,
+        dtype='fp16',
+        name="expert_list"
+    )
+
+    # Step 3: Write weights into expert_list
+    for idx, expert_array in enumerate(EXPERT_UP_LIST):
+        const_weight = mb.const(val=expert_array, name=f"expert_{idx}_const")
+        expert_list = mb.list_write(
+            ls=expert_list,
+            index=mb.const(val=idx),
+            value=const_weight,
+            name=f"write_expert_{idx}"
+        )
+
+    # Step 4: Dynamically select expert index (mock index 1 for this demo)
+    #    list_read is cpu only, and it seems to copy.... expensive bad 
+    selected_index = mb.const(val=np.int32(1))  # or any runtime scalar
+    selected_weight = mb.list_read(
+        ls=expert_list,
+        index=selected_index,
+        name="selected_expert_weight"
+    )
+
+    # Step 5: Apply selected expert conv
+    x = mb.conv(
+        x=x,
+        weight=selected_weight,
+        strides=[1, 1],
+        pad_type="valid",
+        name="expert_conv"
+    )
+
+    # Step 6: Squeeze trailing dims and return output
+    x = mb.squeeze(x=x, axes=[-2, -1], name="output_squeezed")  # (1, OUT)
+    x = mb.reshape(x=x, shape=[1, 1, OUT], name="output_reshaped")
+    return x
 
 TOP_K = 2
 
@@ -278,8 +310,9 @@ def prog1(input):
 
 
 mlmodel = ct.convert(
-    prog,
+    # prog,
     # prog1,
+    prog_list,
     compute_precision=ct.precision.FLOAT16,
     convert_to="mlprogram",
     minimum_deployment_target=ct.target.iOS18,
