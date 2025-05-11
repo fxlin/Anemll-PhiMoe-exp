@@ -4,8 +4,8 @@ import numpy as np
 
 # Define external weights with grouped expert shape
 # NUM_EXPERTS = 2    # can gen MIL program, but takes long. why?
-NUM_EXPERTS = 4
-# NUM_EXPERTS = 8
+# NUM_EXPERTS = 4
+NUM_EXPERTS = 8
 
 # test 
 # HIDDEN=512
@@ -156,7 +156,64 @@ def prog(input):
 
 # print(prog)
 
-#  below: use the "list" ops 
+# below: experts no longer unsqueezed.  use matmul instead of conv. test if slice_by_size can avoid copy (-nope
+EXPERT_UP = np.zeros((NUM_EXPERTS, INTERMEDIATE, HIDDEN), dtype=np.float16)  # up: hidden -> intermediate
+EXPERT_DOWN = np.zeros((NUM_EXPERTS, HIDDEN, INTERMEDIATE), dtype=np.float16)  # down: intermediate -> hidden
+GATE_WEIGHT = np.zeros((NUM_EXPERTS, HIDDEN, 1, 1), dtype=np.float16)  # unchanged, used for conv2d gate
+
+@mb.program(input_specs=[mb.TensorSpec((1, 1, HIDDEN), dtype=types.fp16)], opset_version=ct.target.iOS18)
+def prog2(input):
+    x = mb.transpose(x=input, perm=[0, 2, 1])  # shape (1, HIDDEN, 1)
+    x = mb.squeeze(x=x, axes=[-1])  # shape (1, HIDDEN)
+
+    gate_weight = mb.const(val=GATE_WEIGHT, name="gate_weight")
+    x4gate = mb.expand_dims(x=x, axes=[-1])
+    x4gate = mb.expand_dims(x=x4gate, axes=[-1])  # shape (1, HIDDEN, 1, 1)
+    gate_out = mb.conv(x=x4gate, weight=gate_weight, strides=[1, 1], pad_type="valid")
+    gate_out = mb.squeeze(x=gate_out, axes=[-1])
+    router_logits = mb.squeeze(x=gate_out, axes=[-1])
+    routing_weights = mb.softmax(x=router_logits, axis=-1)
+
+    topk_vals, topk_indices = mb.topk(
+        x=routing_weights, k=2, axis=-1, return_indices=True, name="topk"
+    )
+
+    norm = mb.reduce_sum(x=topk_vals, axes=[-1], keep_dims=True)
+    topk_weights = mb.real_div(x=topk_vals, y=norm)
+
+    w1 = mb.slice_by_index(x=topk_weights, begin=[0, 0], end=[1, 1], squeeze_mask=[True, True])
+    w2 = mb.slice_by_index(x=topk_weights, begin=[0, 1], end=[1, 2], squeeze_mask=[True, True])
+
+    i1 = mb.slice_by_index(x=topk_indices, begin=[0, 0], end=[1, 1], squeeze_mask=[False, True])
+    i2 = mb.slice_by_index(x=topk_indices, begin=[0, 1], end=[1, 2], squeeze_mask=[False, True])
+
+    expert_up = mb.const(val=EXPERT_UP, name="expert_up")
+    expert_down = mb.const(val=EXPERT_DOWN, name="expert_down")
+
+    def apply_expert(i, w, name_suffix):
+        begin = mb.concat(values=[i, mb.const(val=[0, 0])], axis=0)
+        size = mb.const(val=[1, -1, -1])
+
+        up = mb.slice_by_size(x=expert_up, begin=begin, size=size)
+        down = mb.slice_by_size(x=expert_down, begin=begin, size=size)
+
+        up = mb.squeeze(x=up, axes=[0])
+        down = mb.squeeze(x=down, axes=[0])
+
+        h = mb.matmul(x=x, y=mb.transpose(x=up, perm=[1, 0]), name=f"up_{name_suffix}")
+        h = mb.silu(x=h)
+        h = mb.matmul(x=h, y=mb.transpose(x=down, perm=[1, 0]), name=f"down_{name_suffix}")
+        return mb.mul(x=h, y=w, name=f"weighted_{name_suffix}")
+
+    out1 = apply_expert(i1, w1, "1")
+    out2 = apply_expert(i2, w2, "2")
+
+    combined = mb.add(x=out1, y=out2)
+    output = mb.reshape(x=combined, shape=[1, 1, HIDDEN])
+    return output
+
+
+#  below: use the "list" ops... still slow???
 IN=HIDDEN
 OUT=INTERMEDIATE
 EXPERT_UP_LIST = [np.random.rand(INTERMEDIATE, HIDDEN, 1, 1).astype(np.float16) for _ in range(NUM_EXPERTS)]
@@ -177,6 +234,7 @@ def prog_list(input):
     )
 
     # Step 3: Write weights into expert_list
+    #   list_write is fast, likely zero copy
     for idx, expert_array in enumerate(EXPERT_UP_LIST):
         const_weight = mb.const(val=expert_array, name=f"expert_{idx}_const")
         expert_list = mb.list_write(
@@ -188,6 +246,7 @@ def prog_list(input):
 
     # Step 4: Dynamically select expert index (mock index 1 for this demo)
     #    list_read is cpu only, and it seems to copy.... expensive bad 
+    #    update: even if we run on 'cpu only', list_read still expensive (likely copy)
     selected_index = mb.const(val=np.int32(1))  # or any runtime scalar
     selected_weight = mb.list_read(
         ls=expert_list,
@@ -208,6 +267,51 @@ def prog_list(input):
     x = mb.squeeze(x=x, axes=[-2, -1], name="output_squeezed")  # (1, OUT)
     x = mb.reshape(x=x, shape=[1, 1, OUT], name="output_reshaped")
     return x
+
+# use cascade select to get the expert weight .. silly 
+EXPERT_UP_LIST = [np.random.rand(INTERMEDIATE, HIDDEN, 1, 1).astype(np.float16) for _ in range(NUM_EXPERTS)]
+@mb.program(input_specs=[mb.TensorSpec(shape=(1, 1, IN), dtype=types.fp16)], opset_version=ct.target.iOS18)
+def prog_select(input):
+    # Step 1: reshape input for conv
+    x = mb.transpose(x=input, perm=[0, 2, 1])          # (1, HIDDEN, 1)
+    x = mb.expand_dims(x=x, axes=[-1])                 # (1, HIDDEN, 1, 1)
+
+    # Step 4: Dynamically select expert index (mock index 1 for this demo)
+
+    x0 = mb.slice_by_index(
+        x=x,
+        begin=[0, 0, 0, 0],   # either python type, list/tuple of python type, or coreml "Var"
+        end=[0,0,0,1],
+        end_mask=[False, False,False,False],
+        squeeze_mask=[True, True,True,True],
+    )
+    # selected_index = mb.const(val=np.int32(1))  # or any runtime scalar
+    selected_index = mb.cast(x=x0,dtype="int32")  # or any runtime scalar
+
+    y = mb.const(val=np.zeros((1, OUT, 1, 1), dtype=np.float16))
+
+    # 0th expert...
+    xx = mb.select(
+        cond=mb.equal(x=selected_index, y=mb.const(val=np.int32(0))),
+        a=mb.conv(x=x,weight=EXPERT_UP_LIST[0], strides=[1, 1], pad_type="valid"),
+        b=mb.const(val=np.zeros((1, OUT, 1, 1), dtype=np.float16))
+    )
+    y = mb.add(x=y, y=xx)
+    
+    # 1st expert...
+    xx = mb.select(
+        cond=mb.equal(x=selected_index, y=mb.const(val=np.int32(1))),
+        a=mb.conv(x=x, weight=EXPERT_UP_LIST[1], strides=[1, 1], pad_type="valid"),
+        b=mb.const(val=np.zeros((1, OUT, 1, 1), dtype=np.float16))
+    )
+    y = mb.add(x=y, y=xx)
+
+    # more...
+
+    # Step 6: Squeeze trailing dims and return output
+    y = mb.squeeze(x=y, axes=[-2, -1], name="output_squeezed")  # (1, OUT)
+    y = mb.reshape(x=y, shape=[1, 1, OUT], name="output_reshaped")
+    return y
 
 TOP_K = 2
 
@@ -308,44 +412,106 @@ def prog1(input):
 
     return output
 
+def quant(mlmodel_conv, q=[8]):
+    # 6. --- quant, and save again 
+    import coremltools.optimize as cto
+    GROUP_SIZE = 32  # default 
+    mlmodel = mlmodel_conv
 
-mlmodel = ct.convert(
-    # prog,
-    # prog1,
-    prog_list,
-    compute_precision=ct.precision.FLOAT16,
-    convert_to="mlprogram",
-    minimum_deployment_target=ct.target.iOS18,
-    compute_units=ct.ComputeUnit.CPU_AND_NE,
-)
+    for LUT_BITS in q:
+        try:
+            # Set up quantization config     XXX can try other quant config... (not just LUT
+            # https://apple.github.io/coremltools/source/coremltools.optimize.coreml.palettization.html
+            config = cto.coreml.OptimizationConfig(
+                global_config=cto.coreml.OpPalettizerConfig(
+                    mode="kmeans",
+                    nbits=LUT_BITS,
+                    granularity="per_grouped_channel",
+                    group_size=GROUP_SIZE,
+                    num_kmeans_workers=1   # fxl: can only do 1
+                ),
+            )
+            
+            # Apply quantization in a try-except block      fxl: direclty call coremltools' LUT quant schemes
+            #     fxl: https://apple.github.io/coremltools/docs-guides/source/opt-overview.html 
+            try:
+                mlmodel = cto.coreml.palettize_weights(mlmodel, config)
+                print("LUT quantization completed")
+            except ValueError as e:
+                if "Pool not running" in str(e):
+                    print("Warning: Multiprocessing pool error, retrying with single process...")
+                    # Retry with single process
+                    config.global_config.num_kmeans_workers = 1
+                    mlmodel = cto.coreml.palettize_weights(mlmodel, config)
+                    print("LUT quantization completed (single process)")
+                else:
+                    raise
+        except Exception as e:
+            print(f"Warning: LUT quantization failed: {str(e)}")
+            print("Continuing with unquantized model...")
+        
+        # 6. Save
+        PATH = "/tmp/mil-moesingle-NEXP%d-LUT%d.mlpackage" %(NUM_EXPERTS, LUT_BITS)
+        mlmodel.save(PATH)
+        print("Saved quantized model to:", PATH)
 
-print("Generated MIL program:")
-# print(mlmodel._mil_program)
-mil_program_path = "/tmp/mil_program.txt"
-with open(mil_program_path, "w") as f:
-    f.write(str(mlmodel._mil_program))
-print(f"MIL program written to: {mil_program_path}")
 
-# Save - unquantized
-mlmodel.save("/tmp/mil-moesingle.mlpackage")
+# return converted mlmodel
+def convert():
+    mlmodel = ct.convert(
+        # prog,
+        # prog1,
+        # prog2,
+        # prog_list,
+        prog_select,
+        compute_precision=ct.precision.FLOAT16,
+        convert_to="mlprogram",
+        minimum_deployment_target=ct.target.iOS18,
+        compute_units=ct.ComputeUnit.CPU_AND_NE,
+    )
 
+    print("Generated MIL program:")
+    # print(mlmodel._mil_program)
+    mil_program_path = "/tmp/mil_program.txt"
+    with open(mil_program_path, "w") as f:
+        f.write(str(mlmodel._mil_program))
+    print(f"MIL program written to: {mil_program_path}")
 
-# 5. Test
-import time
+    # Save - unquantized
+    mlmodel.save("/tmp/mil-moesingle-NEXP%d.mlpackage" %NUM_EXPERTS)
+    print("Saved model to: /tmp/mil-moesingle-NEXP%d.mlpackage" %NUM_EXPERTS)    
 
-dummy_input = {"input": np.random.rand(1, 1, HIDDEN).astype(np.float16)}
+    # 5. Test
+    import time
 
-# Warm-up run
-mlmodel.predict(dummy_input)
+    dummy_input = {"input": np.random.rand(1, 1, HIDDEN).astype(np.float16)}
 
-# Measure 10 runs
-timings = []
-for _ in range(10):
-    start = time.time()
-    _ = mlmodel.predict(dummy_input)
-    end = time.time()
-    timings.append(end - start)
+    # Warm-up run
+    mlmodel.predict(dummy_input)
 
-# Report median time
-median_time = np.median(timings)
-print(f"Median prediction time over 10 runs: {median_time:.6f} seconds")
+    # Measure 10 runs
+    timings = []
+    for _ in range(10):
+        start = time.time()
+        _ = mlmodel.predict(dummy_input)
+        end = time.time()
+        timings.append(end - start)
+
+    # Report median time
+    median_time = np.median(timings)
+    print(f"Median prediction time over 10 runs: {median_time:.6f} seconds")
+
+    return mlmodel
+
+import argparse
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Convert and optionally quantize a CoreML model.")
+    parser.add_argument("--quant", nargs="+", type=int, help="List of integers for quantization (e.g., --quant 2 4 6 8).")
+    args = parser.parse_args()
+
+    model = convert()
+
+    if args.quant:
+        quant(model, args.quant)

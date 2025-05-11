@@ -7,7 +7,6 @@ also cf
 test code
 https://github.com/apple/coremltools/blob/07ffd86005e385d8eddfd22072836cfb457f7350/coremltools/converters/mil/mil/ops/tests/iOS18/test_tensor_transformation.py
 
-
 results: seems always map to CPU (not ANE)?? contrast to conv2d which maps to ANE well 
 '''
 

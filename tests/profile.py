@@ -165,6 +165,7 @@ def main():
             raise RuntimeError("Model spec has no input descriptions")
 
         inputs = {}
+        state = None
         for input_desc in spec:
             name = input_desc.name
 
@@ -177,6 +178,7 @@ def main():
                 dtype = np.float32
                 inputs[name] = np.zeros(shape, dtype=dtype)
                 print(f"  {name}: [StateTensor] shape={shape}, dtype={dtype}")
+                state = model.make_state()   # fxl: do this here?
                 continue
 
             if input_desc.type.WhichOneof("Type") != "multiArrayType":
@@ -199,8 +201,9 @@ def main():
                 raise ValueError(f"Unsupported input dtype for input '{name}'")
 
             inputs[name] = np.random.rand(*shape).astype(dtype) if np.issubdtype(dtype, np.floating) else np.random.randint(0, 10, size=shape, dtype=dtype)
+            # inputs[name] = np.zeros(shape, dtype=dtype)   # instead of random, fill with zeros (tested: no speed diff)
 
-        state = model.make_state()
+        # state = model.make_state()
 
         print(f"Prepared random input tensors:")
         for k, v in inputs.items():

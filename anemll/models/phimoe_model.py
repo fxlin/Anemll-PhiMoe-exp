@@ -811,8 +811,9 @@ class PhimoeAttention(nn.Module):
         self.rotary_emb = PhimoeRotaryEmbedding(config)
         # self.scaling_factor = torch.tensor(1.0 / math.sqrt(self.head_dim), dtype=MODEL_DTYPE, device=TEST_DEVICE)    # phi does not have this
 
-    # fxl: hidden_states embedding for 1 token (?) 
     # # pretty much reshape to appease ANE, proj QKV & apply emb to QK    (need debugging)
+    #     returned KV ready to save to kvcache (but dose not operate on kvcache
+    # fxl: hidden_states embedding for 1 token (? bs always 1) 
     def get_new_kv_cache(self, hidden_states, current_pos, rotary_emb):
         bsz, q_len, _ = hidden_states.shape
         device = hidden_states.device
@@ -847,6 +848,7 @@ class PhimoeAttention(nn.Module):
 
         return query_states, key_states, value_states
 
+    # cf above 
     # below: pretty much reshape to appease ANE, proj & apply emb 
     #       also cf: PhimoeAttention.forward()
     def get_new_kv_cache_prefill(self, hidden_states, current_pos, rotary_emb, batch_size):
@@ -987,6 +989,7 @@ class PhimoeAttention(nn.Module):
     '''
 
     # fxl: below quite stanard softmax?? maybe for ease of tracing?  "Optimized softmax for batch_size=1" but also used in prefil
+    #   in use by forward_regular forward_prefill
     def ANE_softmax(self, x, dim=-1):
         #return F.softmax(x, dim=dim)
         
@@ -996,7 +999,7 @@ class PhimoeAttention(nn.Module):
         softmax_output = exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
         return softmax_output
         
-    # fxl: an efficeint to multiply q/k states with (precomputed) cos/sin values ...?
+    # fxl: multiply q/k states with (precomputed) cos/sin values ...?
     # dindt check in detail, assume correct
     def apply_rotary_pos_emb(self, q_states, k_states, cos, sin):
         """
@@ -1046,6 +1049,7 @@ class PhimoeAttention(nn.Module):
         return q_rotated, k_rotated
 
     # fxl: 1 token gen. use kvcache. Q (query_states) already projected
+    #   "kv_cache_layer" -- kvcache for this layer (??
     def forward_regular(self, hidden_states, query_states, kv_cache_layer=None, causal_mask=None):
         """Forward pass for single token generation."""
         bsz, q_len, _ = hidden_states.shape
@@ -1053,17 +1057,19 @@ class PhimoeAttention(nn.Module):
         # Get KV cache
         K_layer_cache, V_layer_cache = kv_cache_layer
         
-        # Slice only up to CONTEXT_LENGTH from the cache
+        # Slice only the first CONTEXT_LENGTH from the cache (as cache is being filled incrementally
+        #       XXX how would this slice be lowered to coreml IR? it might be compabiel with ANE, b/c start/end are static?
         K_layer_cache = K_layer_cache[..., :self.config.context_length, :]
         V_layer_cache = V_layer_cache[..., :self.config.context_length, :]
         
         # Repeat KV for multi-head attention
+        #   (this, and transpose below, might require copy on ANE???? 
         key_states = self.repeat_kv(K_layer_cache, self.num_key_value_groups)
         value_states = self.repeat_kv(V_layer_cache, self.num_key_value_groups)
 
         # Compute attention using optimized path for batch_size=1
         
-        # Compute attention scores directly without einsum
+        # Compute attention scores directly without einsum    ( ... scaled dotproduct. ok to use matmul directly - not conv2d??
         # attn_weights = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.scaling_factor
         attn_weights = torch.matmul(query_states, key_states.transpose(-1, -2)) / math.sqrt(self.head_dim)    # cf modeling_phimoe.py forward()
         
@@ -1127,7 +1133,11 @@ class PhimoeAttention(nn.Module):
         [forward_prefill.1] value_states.shape= torch.Size([1, 32, 512, 128])
         '''
         # Compute scaled dot-product attention      fxl: understadn better: why use einsum rather than matmul?
+        # bhqd: bs, heads, q_len, head_dim, bhkd: bs, heads, k_len, head_dim   
+        #           -> bhqk: bs, heads, q_len, k_len (i.e. per-head attn scores
+        #  ---> einsum transposes keystates automatically....
         # attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) * self.scaling_factor
+        #   (einsum - supported in MIL IR
         attn_weights = torch.einsum('bhqd,bhkd->bhqk', query_states, key_states) / math.sqrt(self.head_dim)    # cf modeling_phimoe.py forward()
 
         if causal_mask is not None:
@@ -1145,6 +1155,7 @@ class PhimoeAttention(nn.Module):
             print(f"[forward_prefill]  BATCH attn_weights first 10={attn_weights[0, -1, 0:10, 0:10].tolist()}")
         
         attn_weights = self.ANE_softmax(attn_weights, dim=-1)
+        # bhkq: per head attn scores, bhkd: per head values (# of values == # of keys)
         attn_output = torch.einsum('bhqk,bhkd->bhqd', attn_weights, value_states)  # [batch=1, heads=32, q_len=1, head_dim=64]
         
         # Reshape before projecting: [batch, heads, q_len, head_dim] -> [batch, q_len, heads*head_dim]
@@ -1156,6 +1167,7 @@ class PhimoeAttention(nn.Module):
         
         return attn_output
 
+    # fxl: is the following copy-based on ANE? (i guess wont matter b/c data vol is small?
     def repeat_kv(self, x: torch.Tensor, n_rep: int) -> torch.Tensor:
         """
         Repeat key/value heads n_rep times, while keeping the batch dimension intact.
