@@ -56,7 +56,7 @@ def conditional_matmul_model(X):
         name="compare_elements"
     )
     
-    # Step 3: Conditional multiplication   (XXX why mb.conv not executed at runtime? XXX maybe compare to a traced program
+    # Step 3: Conditional multiplication   (NB: static analyzer cannot include true/false branches)
     def true_fn():
         # return mb.matmul(x=X, y=B, name="xb_matmul")
         X_reshaped = mb.reshape(x=X, shape=[bs, N, 1, 1])

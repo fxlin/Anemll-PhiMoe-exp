@@ -851,6 +851,7 @@ class PhimoeAttention(nn.Module):
     # cf above 
     # below: pretty much reshape to appease ANE, proj & apply emb 
     #       also cf: PhimoeAttention.forward()
+    # "current_pos" not in use?? 
     def get_new_kv_cache_prefill(self, hidden_states, current_pos, rotary_emb, batch_size):
         """Get new key-value cache entries optimized for prefilling with batched tokens."""
         _, batch, _ = hidden_states.shape # [1, BATCH, hidden_size=2048]
@@ -1034,7 +1035,7 @@ class PhimoeAttention(nn.Module):
                 cos = cos.unsqueeze(1)[..., :half_dim]
                 sin = sin.unsqueeze(1)[..., :half_dim]
             
-            
+            # NB: each "pair" channel is "half_dim" apart; not adjacent. that seems ok
             rotated = torch.cat([
                 x1 * cos - x2 * sin,
                 x2 * cos + x1 * sin
@@ -1193,7 +1194,7 @@ class PhimoeDecoderLayer(nn.Module):
         if use_ane_norm:        # not implemented ... 
             self.input_layernorm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
             self.post_attention_layernorm = LayerNormANE(config.hidden_size, eps=config.rms_norm_eps)
-        else:  # use standard rmsnorm (not llamaRMSnorm) - fxl
+        else:  # use standard layernorm (not llamaRMSnorm) - fxl
             self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
             self.post_attention_layernorm = nn.LayerNorm(
                 config.hidden_size, eps=config.rms_norm_eps, elementwise_affine=True)
@@ -1339,7 +1340,7 @@ class PhimoeModel(BaseModel):
 
     # fxl: 4/17/25 the basic idea seems: npu cannot process a long seq. therefore, cut into small subseq. 
     #   as such, prefill cannot be done in one shot, instead it must process each subseq. and "current_pos"
-    #   is the starting position of the subseq. there's a KVcache  maintained across subseqs. and attention is computed
+    #   is the starting position of the subseq (btw, not in use??). there's a KVcache  maintained across subseqs. and attention is computed
     #   and computed across the subseq    (understood 2/5
     def process_layer_prefill(self, layer_idx, hidden_states,  position_ids, causal_mask, current_pos, rotary_emb, layer_offset):
         """Process a single transformer layer in prefill mode"""
